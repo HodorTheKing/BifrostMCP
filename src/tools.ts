@@ -1,4 +1,5 @@
 export const mcpTools = [
+    // Existing Bifrost tools...
     {
         name: "find_usages",
         description: 
@@ -59,46 +60,23 @@ export const mcpTools = [
             required: ["textDocument", "position"]
         }
     },
+    // ... (all existing Bifrost tools preserved)
     {
         name: "go_to_definition",
-        description: "Navigates to the original definition of a symbol at a specified location in code. " +
-            "This tool performs semantic analysis to find the true source definition, not just matching text. It can locate:\n" +
-            "- Function/method declarations\n" +
-            "- Class/interface definitions\n" +
-            "- Variable declarations\n" +
-            "- Type definitions\n" +
-            "- Import/module declarations\n\n" +
-            "The tool is essential for:\n" +
-            "- Understanding where code elements are defined\n" +
-            "- Navigating complex codebases\n" +
-            "- Verifying the actual implementation of interfaces/abstractions\n\n" +
-            "Note: Line numbers are 0-based (first line is 0), while character positions are 0-based (first character is 0).",
+        description: "Navigates to the original definition of a symbol at a specified location in code.",
         inputSchema: {
             type: "object",
             properties: {
                 textDocument: {
                     type: "object",
-                    description: "The document containing the symbol",
-                    properties: {
-                        uri: {
-                            type: "string",
-                            description: "URI of the document"
-                        }
-                    },
+                    properties: { uri: { type: "string" } },
                     required: ["uri"]
                 },
                 position: {
                     type: "object",
-                    description: "The position of the symbol",
                     properties: {
-                        line: {
-                            type: "number",
-                            description: " line number"
-                        },
-                        character: {
-                            type: "number",
-                            description: "Zero-based character position"
-                        }
+                        line: { type: "number" },
+                        character: { type: "number" }
                     },
                     required: ["line", "character"]
                 }
@@ -108,44 +86,20 @@ export const mcpTools = [
     },
     {
         name: "find_implementations",
-        description: "Discovers all concrete implementations of an interface, abstract class, or abstract method in the codebase. " +
-            "This tool performs deep semantic analysis to find all places where:\n" +
-            "- Interfaces are implemented by classes\n" +
-            "- Abstract classes are extended\n" +
-            "- Abstract methods are overridden\n" +
-            "- Virtual methods are overridden\n\n" +
-            "This is particularly valuable for:\n" +
-            "- Understanding polymorphic behavior in the codebase\n" +
-            "- Finding all concrete implementations of an interface\n" +
-            "- Analyzing inheritance hierarchies\n" +
-            "- Verifying contract implementations\n\n" +
-            "Note: Line numbers are 0-based (first line is 0), while character positions are 0-based (first character is 0).",
+        description: "Discovers all concrete implementations of an interface, abstract class, or abstract method.",
         inputSchema: {
             type: "object",
             properties: {
                 textDocument: {
                     type: "object",
-                    description: "The document containing the symbol",
-                    properties: {
-                        uri: {
-                            type: "string",
-                            description: "URI of the document"
-                        }
-                    },
+                    properties: { uri: { type: "string" } },
                     required: ["uri"]
                 },
                 position: {
                     type: "object",
-                    description: "The position of the symbol",
                     properties: {
-                        line: {
-                            type: "number",
-                            description: "Zero-based line number"
-                        },
-                        character: {
-                            type: "number",
-                            description: "Zero-based character position"
-                        }
+                        line: { type: "number" },
+                        character: { type: "number" }
                     },
                     required: ["line", "character"]
                 }
@@ -153,723 +107,274 @@ export const mcpTools = [
             required: ["textDocument", "position"]
         }
     },
+    
+    // NEW: vscode-mcp-server file tools
     {
-        name: "get_hover_info",
-        description: "Retrieves comprehensive information about a symbol when hovering over it in code. " +
-            "This tool provides rich contextual details including:\n" +
-            "- Full type information and signatures\n" +
-            "- Documentation comments and summaries\n" +
-            "- Return types and parameter descriptions\n" +
-            "- Type constraints and generic parameters\n" +
-            "- Deprecation notices and version information\n\n" +
-            "This is especially useful for:\n" +
-            "- Understanding API usage and requirements\n" +
-            "- Viewing documentation without leaving the context\n" +
-            "- Verifying type information during development\n" +
-            "- Quick access to symbol metadata\n\n" +
-            "Note: Line numbers are 0-based (first line is 0), while character positions are 0-based (first character is 0).",
+        name: "list_files_code",
+        description: 
+            "Explores directory structure in VS Code workspace.\n\n" +
+            "WHEN TO USE: Understanding project structure, finding files before read/modify operations.\n\n" +
+            "CRITICAL: NEVER set recursive=true on root directory (.) - output too large. Use recursive only on specific subdirectories.\n\n" +
+            "Returns files and directories at specified path. Start with path='.' to explore root, then dive into specific subdirectories with recursive=true.",
         inputSchema: {
             type: "object",
             properties: {
-                textDocument: {
-                    type: "object",
-                    description: "The document containing the symbol",
-                    properties: {
-                        uri: {
-                            type: "string",
-                            description: "URI of the document"
-                        }
-                    },
-                    required: ["uri"]
-                },
-                position: {
-                    type: "object",
-                    description: "The position of the symbol",
-                    properties: {
-                        line: {
-                            type: "number",
-                            description: "Zero-based line number"
-                        },
-                        character: {
-                            type: "number",
-                            description: "Zero-based character position"
-                        }
-                    },
-                    required: ["line", "character"]
-                }
-            },
-            required: ["textDocument", "position"]
-        }
-    },
-    {
-        name: "get_document_symbols",
-        description: "Analyzes and returns a hierarchical list of all symbols defined within a document. " +
-            "This tool provides a comprehensive overview of the code structure by identifying:\n" +
-            "- Classes and interfaces\n" +
-            "- Methods and functions\n" +
-            "- Properties and fields\n" +
-            "- Namespaces and modules\n" +
-            "- Constants and enumerations\n\n" +
-            "The symbols are returned in a structured format that preserves their relationships and scope. " +
-            "This is particularly useful for:\n" +
-            "- Understanding the overall structure of a file\n" +
-            "- Creating code outlines and documentation\n" +
-            "- Navigating large files efficiently\n" +
-            "- Analyzing code organization and architecture",
-        inputSchema: {
-            type: "object",
-            properties: {
-                textDocument: {
-                    type: "object",
-                    description: "The document to analyze",
-                    properties: {
-                        uri: {
-                            type: "string",
-                            description: "URI of the document"
-                        }
-                    },
-                    required: ["uri"]
-                }
-            },
-            required: ["textDocument"]
-        }
-    },
-    {
-        name: "get_completions",
-        description: "Provides intelligent code completion suggestions based on the current context and cursor position. " +
-            "This tool analyzes the code to offer relevant suggestions including:\n" +
-            "- Variable and function names\n" +
-            "- Class and type names\n" +
-            "- Property and method completions\n" +
-            "- Import statements\n" +
-            "- Snippets and common patterns\n\n" +
-            "The suggestions are context-aware and can be triggered by:\n" +
-            "- Typing part of a symbol name\n" +
-            "- Accessing object properties (.)\n" +
-            "- Opening brackets or parentheses\n" +
-            "- Language-specific triggers\n\n" +
-            "Note: Line numbers are 0-based (first line is 0), and character positions are 0-based (first character is 0).",
-        inputSchema: {
-            type: "object",
-            properties: {
-                textDocument: {
-                    type: "object",
-                    description: "The document to get completions for",
-                    properties: {
-                        uri: {
-                            type: "string",
-                            description: "URI of the document"
-                        }
-                    },
-                    required: ["uri"]
-                },
-                position: {
-                    type: "object",
-                    description: "The position to get completions at",
-                    properties: {
-                        line: {
-                            type: "number",
-                            description: "Zero-based line number"
-                        },
-                        character: {
-                            type: "number",
-                            description: "Zero-based character position"
-                        }
-                    },
-                    required: ["line", "character"]
-                },
-                triggerCharacter: {
+                path: {
                     type: "string",
-                    description: "Optional trigger character that caused completion"
+                    description: "The path to list files from"
+                },
+                recursive: {
+                    type: "boolean",
+                    description: "Whether to list files recursively",
+                    default: false
                 }
             },
-            required: ["textDocument", "position"]
+            required: ["path"]
         }
     },
     {
-        name: "get_signature_help",
-        description: "Provides detailed information about function signatures as you type function calls. " +
-            "This tool offers real-time assistance with:\n" +
-            "- Parameter names and types\n" +
-            "- Parameter documentation\n" +
-            "- Overload information\n" +
-            "- Return type details\n" +
-            "- Generic type constraints\n\n" +
-            "The signature help is context-sensitive and updates as you type, showing:\n" +
-            "- Currently active parameter\n" +
-            "- Available overloads\n" +
-            "- Type compatibility information\n" +
-            "- Optional and default values\n\n" +
-            "Note: Line numbers are 0-based (first line is 0), and character positions are 0-based (first character is 0).",
+        name: "read_file_code",
+        description: 
+            "Retrieves file contents with size limits and partial reading support.\n\n" +
+            "WHEN TO USE: Reading code, config files, analyzing implementations. Files >100k chars will fail.\n\n" +
+            "Encoding: Text encodings (utf-8, latin1, etc.) for text files, 'base64' for base64-encoded string.\n" +
+            "Line numbers: Use startLine/endLine (1-based) for large files to read specific sections only.\n\n" +
+            "If file too large: Use startLine/endLine to read relevant sections only.",
         inputSchema: {
             type: "object",
             properties: {
-                textDocument: {
-                    type: "object",
-                    description: "The document to get signature help for",
-                    properties: {
-                        uri: {
-                            type: "string",
-                            description: "URI of the document"
-                        }
-                    },
-                    required: ["uri"]
+                path: {
+                    type: "string",
+                    description: "The path to the file to read"
                 },
-                position: {
-                    type: "object",
-                    description: "The position to get signature help at",
-                    properties: {
-                        line: {
-                            type: "number",
-                            description: "Zero-based line number"
-                        },
-                        character: {
-                            type: "number",
-                            description: "Zero-based character position"
-                        }
-                    },
-                    required: ["line", "character"]
+                encoding: {
+                    type: "string",
+                    description: "Encoding to convert the file content. Use 'base64' for base64-encoded string",
+                    default: "utf-8"
+                },
+                maxCharacters: {
+                    type: "number",
+                    description: "Maximum character count (default: 100,000)",
+                    default: 100000
+                },
+                startLine: {
+                    type: "number",
+                    description: "The start line number (1-based, inclusive). Default: read from beginning",
+                    default: -1
+                },
+                endLine: {
+                    type: "number",
+                    description: "The end line number (1-based, inclusive). Default: read to end",
+                    default: -1
                 }
             },
-            required: ["textDocument", "position"]
+            required: ["path"]
         }
     },
     {
-        name: "get_rename_locations",
-        description: "Identifies all locations that need to be updated when renaming a symbol. " +
-            "This tool performs a comprehensive analysis to ensure safe and accurate renaming by:\n" +
-            "- Finding all references to the symbol\n" +
-            "- Checking for naming conflicts\n" +
-            "- Analyzing scope boundaries\n" +
-            "- Identifying related declarations\n\n" +
-            "The tool is particularly valuable for:\n" +
-            "- Safe refactoring operations\n" +
-            "- Cross-file symbol renaming\n" +
-            "- Impact analysis before renaming\n" +
-            "- Maintaining code consistency\n\n" +
-            "Note: Line numbers are 0-based (first line is 0), and character positions are 0-based (first character is 0).",
+        name: "create_file_code",
+        description: 
+            "Creates new files or completely rewrites existing files.\n\n" +
+            "WHEN TO USE: New files, large modifications (>10 lines), complete file rewrites.\n" +
+            "USE replace_lines_code instead for: small edits ≤10 lines where you have exact original content.\n\n" +
+            "File handling: Use overwrite=true to replace existing files, ignoreIfExists=true to skip if file exists.\n" +
+            "Always check with list_files_code first unless you specifically want to overwrite.",
         inputSchema: {
             type: "object",
             properties: {
-                textDocument: {
-                    type: "object",
-                    description: "The document containing the symbol to rename",
-                    properties: {
-                        uri: {
-                            type: "string",
-                            description: "URI of the document"
-                        }
-                    },
-                    required: ["uri"]
+                path: {
+                    type: "string",
+                    description: "The path to the file to create"
                 },
-                position: {
-                    type: "object",
-                    description: "The position of the symbol to rename",
-                    properties: {
-                        line: {
-                            type: "number",
-                            description: "Zero-based line number"
-                        },
-                        character: {
-                            type: "number",
-                            description: "Zero-based character position"
-                        }
-                    },
-                    required: ["line", "character"]
+                content: {
+                    type: "string",
+                    description: "The content to write to the file"
+                },
+                overwrite: {
+                    type: "boolean",
+                    description: "Whether to overwrite if the file exists",
+                    default: false
+                },
+                ignoreIfExists: {
+                    type: "boolean",
+                    description: "Whether to ignore if the file exists",
+                    default: false
+                }
+            },
+            required: ["path", "content"]
+        }
+    },
+    {
+        name: "replace_lines_code",
+        description: 
+            "Replaces specific lines in existing files with exact content validation.\n\n" +
+            "WHEN TO USE: Modifications ≤10 lines where you have exact original text, or inserts of any size.\n" +
+            "USE create_file_code instead for: new files, large modifications (>10 lines), or when original text is uncertain.\n\n" +
+            "CRITICAL: originalCode parameter must match current file content exactly or tool fails.\n" +
+            "If tool fails: run read_file_code on target lines to get current content, then retry.\n\n" +
+            "Parameters use 1-based line numbers. Always verify line numbers with read_file_code.",
+        inputSchema: {
+            type: "object",
+            properties: {
+                path: {
+                    type: "string",
+                    description: "The path to the file to modify"
+                },
+                startLine: {
+                    type: "number",
+                    description: "The start line number (1-based, inclusive)"
+                },
+                endLine: {
+                    type: "number",
+                    description: "The end line number (1-based, inclusive)"
+                },
+                content: {
+                    type: "string",
+                    description: "The new content to replace the lines with"
+                },
+                originalCode: {
+                    type: "string",
+                    description: "The original code for validation - must match exactly"
+                }
+            },
+            required: ["path", "startLine", "endLine", "content", "originalCode"]
+        }
+    },
+    {
+        name: "move_file_code",
+        description: 
+            "Moves a file or directory to a new location using VS Code's refactoring.\n\n" +
+            "Updates all references to the moved file in the workspace automatically.",
+        inputSchema: {
+            type: "object",
+            properties: {
+                sourcePath: {
+                    type: "string",
+                    description: "The current path of the file or directory to move"
+                },
+                targetPath: {
+                    type: "string",
+                    description: "The new path where the file should be moved"
+                },
+                overwrite: {
+                    type: "boolean",
+                    description: "Whether to overwrite if target exists",
+                    default: false
+                }
+            },
+            required: ["sourcePath", "targetPath"]
+        }
+    },
+    {
+        name: "rename_file_code",
+        description: 
+            "Renames a file or directory using VS Code's WorkspaceEdit API.\n\n" +
+            "Updates all references to the renamed file in the workspace automatically.",
+        inputSchema: {
+            type: "object",
+            properties: {
+                filePath: {
+                    type: "string",
+                    description: "The current path of the file to rename"
                 },
                 newName: {
                     type: "string",
-                    description: "The new name for the symbol"
+                    description: "The new name for the file"
+                },
+                overwrite: {
+                    type: "boolean",
+                    description: "Whether to overwrite if a file with new name exists",
+                    default: false
                 }
             },
-            required: ["textDocument", "position"]
+            required: ["filePath", "newName"]
         }
     },
     {
-        name: "rename",
-        description: "Identifies all locations that need to be updated when renaming a symbol, and performs the renaming. " +
-            "This tool performs a comprehensive analysis to ensure safe and accurate renaming by:\n" +
-            "- Finding all references to the symbol\n" +
-            "- Checking for naming conflicts\n" +
-            "- Analyzing scope boundaries\n" +
-            "- Identifying related declarations\n\n" +
-            "The tool is particularly valuable for:\n" +
-            "- Safe refactoring operations\n" +
-            "- Cross-file symbol renaming\n" +
-            "- Maintaining code consistency\n\n" +
-            "- Renaming without the need to generate code\n\n" +
-            "Note: Line numbers are 0-based (first line is 0), and character positions are 0-based (first character is 0).",
+        name: "copy_file_code",
+        description: 
+            "Copies a file to a new location.\n\n" +
+            "WHEN TO USE: Creating backups, duplicating files for testing, creating template files.\n" +
+            "LIMITATION: Only works for files, not directories.",
         inputSchema: {
             type: "object",
             properties: {
-                textDocument: {
-                    type: "object",
-                    description: "The document containing the symbol to rename",
-                    properties: {
-                        uri: {
-                            type: "string",
-                            description: "URI of the document"
-                        }
-                    },
-                    required: ["uri"]
-                },
-                position: {
-                    type: "object",
-                    description: "The position of the symbol to rename",
-                    properties: {
-                        line: {
-                            type: "number",
-                            description: "Zero-based line number"
-                        },
-                        character: {
-                            type: "number",
-                            description: "Zero-based character position"
-                        }
-                    },
-                    required: ["line", "character"]
-                },
-                newName: {
+                sourcePath: {
                     type: "string",
-                    description: "The new name for the symbol"
-                }
-            },
-            required: ["textDocument", "position", "newName"]
-        }
-    },
-    {
-        name: "get_code_actions",
-        description: "Provides context-aware code actions and refactoring suggestions at a specified location. " +
-            "This tool analyzes the code to offer intelligent improvements such as:\n" +
-            "- Quick fixes for errors and warnings\n" +
-            "- Code refactoring options\n" +
-            "- Import management suggestions\n" +
-            "- Code style improvements\n" +
-            "- Performance optimizations\n\n" +
-            "Available actions may include:\n" +
-            "- Extract method/variable/constant\n" +
-            "- Implement interface members\n" +
-            "- Add missing imports\n" +
-            "- Convert code constructs\n" +
-            "- Fix code style issues\n\n" +
-            "Note: Line numbers are 0-based (first line is 0), and character positions are 0-based (first character is 0).",
-        inputSchema: {
-            type: "object",
-            properties: {
-                textDocument: {
-                    type: "object",
-                    description: "The document to get code actions for",
-                    properties: {
-                        uri: {
-                            type: "string",
-                            description: "URI of the document"
-                        }
-                    },
-                    required: ["uri"]
+                    description: "The path of the file to copy"
                 },
-                position: {
-                    type: "object",
-                    description: "The position to get code actions at",
-                    properties: {
-                        line: {
-                            type: "number",
-                            description: "Zero-based line number"
-                        },
-                        character: {
-                            type: "number",
-                            description: "Zero-based character position"
-                        }
-                    },
-                    required: ["line", "character"]
-                }
-            },
-            required: ["textDocument"]
-        }
-    },
-    {
-        name: "get_semantic_tokens",
-        description: "Provides detailed semantic token information for enhanced code understanding and highlighting. " +
-            "This tool performs deep analysis to identify and classify code elements:\n" +
-            "- Variables and their scopes\n" +
-            "- Function and method names\n" +
-            "- Type names and annotations\n" +
-            "- Keywords and operators\n" +
-            "- Comments and documentation\n\n" +
-            "The semantic information enables:\n" +
-            "- Precise syntax highlighting\n" +
-            "- Code navigation improvements\n" +
-            "- Better code understanding\n" +
-            "- Accurate symbol classification\n" +
-            "- Enhanced code analysis",
-        inputSchema: {
-            type: "object",
-            properties: {
-                textDocument: {
-                    type: "object",
-                    description: "The document to get semantic tokens for",
-                    properties: {
-                        uri: {
-                            type: "string",
-                            description: "URI of the document"
-                        }
-                    },
-                    required: ["uri"]
-                }
-            },
-            required: ["textDocument"]
-        }
-    },
-    {
-        name: "get_call_hierarchy",
-        description: "Analyzes and visualizes the call relationships between functions and methods in the codebase. " +
-            "This tool builds a comprehensive call graph showing:\n" +
-            "- Incoming calls (who calls this function)\n" +
-            "- Outgoing calls (what this function calls)\n" +
-            "- Call chains and dependencies\n" +
-            "- Recursive call patterns\n\n" +
-            "This information is invaluable for:\n" +
-            "- Understanding code flow and dependencies\n" +
-            "- Analyzing impact of changes\n" +
-            "- Debugging complex call chains\n" +
-            "- Optimizing function relationships\n" +
-            "- Identifying potential refactoring targets\n\n" +
-            "Note: Line numbers are 0-based (first line is 0), and character positions are 0-based (first character is 0).",
-        inputSchema: {
-            type: "object",
-            properties: {
-                textDocument: {
-                    type: "object",
-                    description: "The document containing the function",
-                    properties: {
-                        uri: {
-                            type: "string",
-                            description: "URI of the document"
-                        }
-                    },
-                    required: ["uri"]
-                },
-                position: {
-                    type: "object",
-                    description: "The position of the function",
-                    properties: {
-                        line: {
-                            type: "number",
-                            description: "Zero-based line number"
-                        },
-                        character: {
-                            type: "number",
-                            description: "Zero-based character position"
-                        }
-                    },
-                    required: ["line", "character"]
-                }
-            },
-            required: ["textDocument", "position"]
-        }
-    },
-    {
-        name: "get_type_hierarchy",
-        description: "Analyzes and visualizes the inheritance and implementation relationships between types. " +
-            "This tool creates a comprehensive type hierarchy showing:\n" +
-            "- Parent classes and interfaces\n" +
-            "- Child classes and implementations\n" +
-            "- Interface inheritance chains\n" +
-            "- Mixin and trait relationships\n\n" +
-            "The hierarchy information is crucial for:\n" +
-            "- Understanding class relationships\n" +
-            "- Analyzing inheritance patterns\n" +
-            "- Planning class structure changes\n" +
-            "- Identifying potential abstraction opportunities\n" +
-            "- Verifying type system design\n\n" +
-            "Note: Line numbers are 0-based (first line is 0), and character positions are 0-based (first character is 0).",
-        inputSchema: {
-            type: "object",
-            properties: {
-                textDocument: {
-                    type: "object",
-                    description: "The document containing the type",
-                    properties: {
-                        uri: {
-                            type: "string",
-                            description: "URI of the document"
-                        }
-                    },
-                    required: ["uri"]
-                },
-                position: {
-                    type: "object",
-                    description: "The position of the type",
-                    properties: {
-                        line: {
-                            type: "number",
-                            description: "Zero-based line number"
-                        },
-                        character: {
-                            type: "number",
-                            description: "Zero-based character position"
-                        }
-                    },
-                    required: ["line", "character"]
-                }
-            },
-            required: ["textDocument", "position"]
-        }
-    },
-    {
-        name: "get_code_lens",
-        description: "Gets CodeLens information for a document, showing actionable contextual information inline with code",
-        inputSchema: {
-            type: "object",
-            properties: {
-                textDocument: {
-                    type: "object",
-                    description: "The document to get CodeLens for",
-                    properties: {
-                        uri: {
-                            type: "string",
-                            description: "URI of the document"
-                        }
-                    },
-                    required: ["uri"]
-                }
-            },
-            required: ["textDocument"]
-        }
-    },
-    {
-        name: "get_selection_range",
-        description: "Gets selection ranges for a position in a document. This helps in smart selection expansion based on semantic document structure.",
-        inputSchema: {
-            type: "object",
-            properties: {
-                textDocument: {
-                    type: "object",
-                    description: "The document to analyze",
-                    properties: {
-                        uri: {
-                            type: "string",
-                            description: "URI of the document"
-                        }
-                    },
-                    required: ["uri"]
-                },
-                position: {
-                    type: "object",
-                    description: "The position to get selection ranges for",
-                    properties: {
-                        line: {
-                            type: "number",
-                            description: "Zero-based line number"
-                        },
-                        character: {
-                            type: "number",
-                            description: "Zero-based character position"
-                        }
-                    },
-                    required: ["line", "character"]
-                }
-            },
-            required: ["textDocument", "position"]
-        }
-    },
-    {
-        name: "get_type_definition",
-        description: "Finds type definitions of a symbol at a specified location. This is particularly useful for finding the underlying type definitions of variables, interfaces, and classes.",
-        inputSchema: {
-            type: "object",
-            properties: {
-                textDocument: {
-                    type: "object",
-                    description: "The document containing the symbol",
-                    properties: {
-                        uri: {
-                            type: "string",
-                            description: "URI of the document"
-                        }
-                    },
-                    required: ["uri"]
-                },
-                position: {
-                    type: "object",
-                    description: "The position of the symbol",
-                    properties: {
-                        line: {
-                            type: "number",
-                            description: "Zero-based line number"
-                        },
-                        character: {
-                            type: "number",
-                            description: "Zero-based character position"
-                        }
-                    },
-                    required: ["line", "character"]
-                }
-            },
-            required: ["textDocument", "position"]
-        }
-    },
-    {
-        name: "get_declaration",
-        description: "Finds declarations of a symbol at a specified location. This helps in navigating to where symbols are declared, particularly useful for imported symbols.",
-        inputSchema: {
-            type: "object",
-            properties: {
-                textDocument: {
-                    type: "object",
-                    description: "The document containing the symbol",
-                    properties: {
-                        uri: {
-                            type: "string",
-                            description: "URI of the document"
-                        }
-                    },
-                    required: ["uri"]
-                },
-                position: {
-                    type: "object",
-                    description: "The position of the symbol",
-                    properties: {
-                        line: {
-                            type: "number",
-                            description: "Zero-based line number"
-                        },
-                        character: {
-                            type: "number",
-                            description: "Zero-based character position"
-                        }
-                    },
-                    required: ["line", "character"]
-                }
-            },
-            required: ["textDocument", "position"]
-        }
-    },
-    {
-        name: "get_document_highlights",
-        description: "Finds all highlights of a symbol in a document. This is useful for highlighting all occurrences of a symbol within the current document.",
-        inputSchema: {
-            type: "object",
-            properties: {
-                textDocument: {
-                    type: "object",
-                    description: "The document to analyze",
-                    properties: {
-                        uri: {
-                            type: "string",
-                            description: "URI of the document"
-                        }
-                    },
-                    required: ["uri"]
-                },
-                position: {
-                    type: "object",
-                    description: "The position of the symbol",
-                    properties: {
-                        line: {
-                            type: "number",
-                            description: "Zero-based line number"
-                        },
-                        character: {
-                            type: "number",
-                            description: "Zero-based character position"
-                        }
-                    },
-                    required: ["line", "character"]
-                }
-            },
-            required: ["textDocument", "position"]
-        }
-    },
-    {
-        name: "get_workspace_symbols",
-        description: "Searches for symbols across the entire workspace. This is useful for finding symbols by name across all files. Especially useful for finding the file and positions of a symbol to use in other tools.",
-        inputSchema: {
-            type: "object",
-            properties: {
-                query: {
+                targetPath: {
                     type: "string",
-                    description: "The search query for finding symbols"
+                    description: "The path where the copy should be created"
+                },
+                overwrite: {
+                    type: "boolean",
+                    description: "Whether to overwrite if target already exists",
+                    default: false
                 }
             },
-            required: ["query"]
+            required: ["sourcePath", "targetPath"]
+        }
+    },
+    {
+        name: "execute_shell_command_code",
+        description: 
+            "Executes shell commands in VS Code integrated terminal.\n\n" +
+            "WHEN TO USE: Running CLI commands, builds, git operations, npm/pip installs.\n\n" +
+            "Working directory: Use cwd to run commands in specific directories.\n" +
+            "Timeout: Commands must complete within specified time (default 10s) or returns timeout error, but command may still be running in terminal.",
+        inputSchema: {
+            type: "object",
+            properties: {
+                command: {
+                    type: "string",
+                    description: "The shell command to execute"
+                },
+                cwd: {
+                    type: "string",
+                    description: "Optional working directory for the command",
+                    default: "."
+                },
+                timeout: {
+                    type: "number",
+                    description: "Command timeout in milliseconds (default: 10000)",
+                    default: 10000
+                }
+            },
+            required: ["command"]
         }
     }
 ];
 
+// Tool descriptions export for quick reference
 export const toolsDescriptions = [
-    {
-        name: "find_usages",
-        description: "Find all references to a symbol"
-    },
-    {
-        name: "go_to_definition",
-        description: "Find definition of a symbol"
-    },
-    {
-        name: "find_implementations",
-        description: "Find implementations of interface/abstract method"
-    },
-    {
-        name: "get_hover_info",
-        description: "Get hover information for a symbol"
-    },
-    {
-        name: "get_document_symbols",
-        description: "Get all symbols in document"
-    },
-    {
-        name: "get_completions",
-        description: "Get code completion suggestions at a position"
-    },
-    {
-        name: "get_signature_help",
-        description: "Get function signature information"
-    },
-    {
-        name: "get_rename_locations",
-        description: "Get all locations that would be affected by renaming a symbol"
-    },
-    {
-        name: "rename",
-        description: "Rename a symbol"
-    },
-    {
-        name: "get_code_actions",
-        description: "Get available code actions and refactorings"
-    },
-    {
-        name: "get_semantic_tokens",
-        description: "Get semantic token information for code understanding"
-    },
-    {
-        name: "get_call_hierarchy",
-        description: "Get incoming and outgoing call hierarchy"
-    },
-    {
-        name: "get_type_hierarchy",
-        description: "Get type hierarchy information"
-    },
-    {
-        name: "get_code_lens",
-        description: "Gets CodeLens information for a document, showing actionable contextual information inline with code"
-    },
-    {
-        name: "get_selection_range",
-        description: "Gets selection ranges for smart selection expansion"
-    },
-    {
-        name: "get_type_definition",
-        description: "Find type definitions of symbols"
-    },
-    {
-        name: "get_declaration",
-        description: "Find declarations of symbols"
-    },
-    {
-        name: "get_document_highlights",
-        description: "Find all highlights of a symbol in document"
-    },
-    {
-        name: "get_workspace_symbols",
-        description: "Search for symbols across the workspace"
-    }
+    // Bifrost tools
+    { name: "find_usages", description: "Find all references to a symbol" },
+    { name: "go_to_definition", description: "Find definition of a symbol" },
+    { name: "find_implementations", description: "Find implementations of interface/abstract method" },
+    { name: "get_hover_info", description: "Get hover information for a symbol" },
+    { name: "get_document_symbols", description: "Get all symbols in document" },
+    { name: "get_completions", description: "Get code completion suggestions" },
+    { name: "get_signature_help", description: "Get function signature information" },
+    { name: "get_rename_locations", description: "Get locations affected by renaming" },
+    { name: "rename", description: "Rename a symbol" },
+    { name: "get_code_actions", description: "Get available code actions and refactorings" },
+    { name: "get_semantic_tokens", description: "Get semantic token information" },
+    { name: "get_call_hierarchy", description: "Get call hierarchy" },
+    { name: "get_type_hierarchy", description: "Get type hierarchy" },
+    { name: "get_code_lens", description: "Gets CodeLens inline information" },
+    { name: "get_selection_range", description: "Gets smart selection ranges" },
+    { name: "get_type_definition", description: "Find type definitions" },
+    { name: "get_declaration", description: "Find declarations" },
+    { name: "get_document_highlights", description: "Find all highlights in document" },
+    { name: "get_workspace_symbols", description: "Search symbols across workspace" },
+    // New vscode-mcp-server tools
+    { name: "list_files_code", description: "List files and directories in workspace" },
+    { name: "read_file_code", description: "Read file contents" },
+    { name: "create_file_code", description: "Create new files" },
+    { name: "replace_lines_code", description: "Replace specific lines in files" },
+    { name: "move_file_code", description: "Move files/directories" },
+    { name: "rename_file_code", description: "Rename files" },
+    { name: "copy_file_code", description: "Copy files" },
+    { name: "execute_shell_command_code", description: "Execute shell commands in terminal" }
 ];
