@@ -1,8 +1,6 @@
 import * as vscode from 'vscode';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import getRawBody from 'raw-body';
-import contentType from 'content-type';
 import { randomUUID } from 'crypto';
 import { 
     CallToolRequestSchema, 
@@ -19,8 +17,6 @@ import { createDebugPanel } from './debugPanel';
 import { mcpServer, httpServer, setMcpServer, setHttpServer } from './globals';
 import { runTool } from './toolRunner';
 import { findBifrostConfig, BifrostConfig, getProjectBasePath } from './config';
-
-const MAXIMUM_MESSAGE_SIZE = '1048576'; // 1 MB
 
 export async function activate(context: vscode.ExtensionContext) {
     let currentConfig: BifrostConfig | null = null;
@@ -96,7 +92,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
         // Find config in current workspace - will return DEFAULT_CONFIG if none found
         const config = await findBifrostConfig(workspaceFolders[0]);
-        currentConfig = config!; // We know this is never null since findBifrostConfig always returns DEFAULT_CONFIG
+        currentConfig = config!;
         await startMcpServer(config!);
     }
 
@@ -135,7 +131,6 @@ export async function activate(context: vscode.ExtensionContext) {
                 const { name, arguments: args } = request.params;
                 let result: any;
                 
-                // Verify file exists for commands that require it
                 if (args && typeof args === 'object' && 'textDocument' in args && 
                     args.textDocument && typeof args.textDocument === 'object' && 
                     'uri' in args.textDocument && typeof args.textDocument.uri === 'string') {
@@ -165,7 +160,6 @@ export async function activate(context: vscode.ExtensionContext) {
             }
         });
 
-        // Set up Express app - DON'T use express.json() for /mcp
         const app = express();
         app.use(cors());
 
@@ -179,14 +173,11 @@ export async function activate(context: vscode.ExtensionContext) {
         // Connect MCP server to transport
         await mcpServer!.connect(transport);
 
-        // Single MCP endpoint that handles POST requests
         // Handle POST requests for MCP messages
         app.post(`${basePath}/mcp`, async (req: Request, res: Response) => {
             console.log(`Received MCP POST request for project ${config.projectName}`);
             
             try {
-                // We need to parse the body manually because Express's json parser
-                // has already parsed it, but we should pass it to handleRequest
                 await transport.handleRequest(req, res, req.body);
                 console.log('MCP POST handled successfully');
             } catch (error) {
@@ -202,7 +193,7 @@ export async function activate(context: vscode.ExtensionContext) {
             }
         });
         
-        // Handle GET requests for SSE streaming
+        // Handle GET requests for SSE streaming from Streamable HTTP
         app.get(`${basePath}/mcp`, async (req: Request, res: Response) => {
             console.log(`Received MCP GET request for project ${config.projectName}`);
             
@@ -220,12 +211,10 @@ export async function activate(context: vscode.ExtensionContext) {
                     }
                 });
             }
-        });    // SSE endpoint for backwards compatibility with MCP clients
-        // that use the older SSE transport - returns 410 Gone
+        });
+
+        // Backwards compatibility endpoints - return 410 Gone
         app.get(`${basePath}/sse`, async (_req: Request, res: Response) => {
-            console.log(`SSE connection attempt (deprecated transport) for project ${config.projectName}`);
-            console.log(`Consider migrating to Streamable HTTP at ${basePath}/mcp`);
-            
             res.status(410).json({
                 status: 'deprecated',
                 message: 'SSE transport is deprecated. Use Streamable HTTP at /mcp',
@@ -233,10 +222,7 @@ export async function activate(context: vscode.ExtensionContext) {
             });
         });
 
-        // Message endpoint (also deprecated) - returns 410 Gone
         app.post(`${basePath}/message`, async (_req: Request, res: Response) => {
-            console.log(`Message POST received (deprecated transport) for project ${config.projectName}`);
-            
             res.status(410).json({
                 status: 'deprecated',
                 message: 'Message endpoint is deprecated. Use Streamable HTTP at /mcp',
@@ -244,7 +230,7 @@ export async function activate(context: vscode.ExtensionContext) {
             });
         });
 
-        // Health check endpoint with migration info
+        // Health check endpoint
         app.get(`${basePath}/health`, (_req: Request, res: Response) => {
             res.status(200).json({ 
                 status: 'ok',
