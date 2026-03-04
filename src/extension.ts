@@ -1,6 +1,8 @@
 import * as vscode from 'vscode';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { NodeStreamableHTTPServerTransport } from '@modelcontextprotocol/node/streamable-http.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import getRawBody from 'raw-body';
+import contentType from 'content-type';
 import { randomUUID } from 'crypto';
 import { 
     CallToolRequestSchema, 
@@ -17,6 +19,8 @@ import { createDebugPanel } from './debugPanel';
 import { mcpServer, httpServer, setMcpServer, setHttpServer } from './globals';
 import { runTool } from './toolRunner';
 import { findBifrostConfig, BifrostConfig, getProjectBasePath } from './config';
+
+const MAXIMUM_MESSAGE_SIZE = '1048576'; // 1 MB
 
 export async function activate(context: vscode.ExtensionContext) {
     let currentConfig: BifrostConfig | null = null;
@@ -161,15 +165,14 @@ export async function activate(context: vscode.ExtensionContext) {
             }
         });
 
-        // Set up Express app
+        // Set up Express app - DON'T use express.json() for /mcp
         const app = express();
         app.use(cors());
-        app.use(express.json());
 
         const basePath = getProjectBasePath(config);
 
         // Create Streamable HTTP transport with session management
-        const transport = new NodeStreamableHTTPServerTransport({
+        const transport = new StreamableHTTPServerTransport({
             sessionIdGenerator: () => randomUUID()
         });
 
@@ -177,10 +180,13 @@ export async function activate(context: vscode.ExtensionContext) {
         await mcpServer!.connect(transport);
 
         // Single MCP endpoint that handles POST requests
+        // Handle POST requests for MCP messages
         app.post(`${basePath}/mcp`, async (req: Request, res: Response) => {
             console.log(`Received MCP POST request for project ${config.projectName}`);
             
             try {
+                // We need to parse the body manually because Express's json parser
+                // has already parsed it, but we should pass it to handleRequest
                 await transport.handleRequest(req, res, req.body);
                 console.log('MCP POST handled successfully');
             } catch (error) {
@@ -195,8 +201,26 @@ export async function activate(context: vscode.ExtensionContext) {
                 });
             }
         });
-
-        // SSE endpoint for backwards compatibility with MCP clients
+        
+        // Handle GET requests for SSE streaming
+        app.get(`${basePath}/mcp`, async (req: Request, res: Response) => {
+            console.log(`Received MCP GET request for project ${config.projectName}`);
+            
+            try {
+                await transport.handleRequest(req, res);
+                console.log('MCP GET handled successfully');
+            } catch (error) {
+                console.error('Error handling MCP GET:', error);
+                res.status(500).json({
+                    jsonrpc: "2.0",
+                    id: null,
+                    error: {
+                        code: -32000,
+                        message: String(error)
+                    }
+                });
+            }
+        });    // SSE endpoint for backwards compatibility with MCP clients
         // that use the older SSE transport - returns 410 Gone
         app.get(`${basePath}/sse`, async (_req: Request, res: Response) => {
             console.log(`SSE connection attempt (deprecated transport) for project ${config.projectName}`);
