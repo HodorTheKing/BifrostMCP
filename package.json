@@ -2,12 +2,12 @@
   "name": "bifrost-mcp",
   "displayName": "Bifrost - VSCode Dev Tools MCP Server",
   "description": "An MCP server that exposes features of VSCode dev tools to the MCP clients",
-  "version": "0.0.14",
+  "version": "0.0.15",
   "publisher": "ConnorHallman",
   "icon": "icon.png",
   "repository": {
     "type": "git",
-    "url": "https://github.com/biegehydra/csharplangmcpserver"
+    "url": "https://github.com/HodorTheKing/BifrostMCP"
   },
   "engines": {
     "vscode": "^1.93.0"
@@ -76,6 +76,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.6.1",
+    "@modelcontextprotocol/node": "^1.6.1",
     "@types/cors": "^2.8.17",
     "@types/express": "^5.0.0",
     "cors": "^2.8.5",

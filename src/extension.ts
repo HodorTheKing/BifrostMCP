@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
+import { NodeStreamableHTTPServerTransport } from '@modelcontextprotocol/node/streamable-http.js';
+import { randomUUID } from 'crypto';
 import { 
     CallToolRequestSchema, 
     ListResourcesRequestSchema, 
@@ -165,78 +166,25 @@ export async function activate(context: vscode.ExtensionContext) {
         app.use(cors());
         app.use(express.json());
 
-        // Track active transports by session ID
-        const transports: { [sessionId: string]: SSEServerTransport } = {};
-
         const basePath = getProjectBasePath(config);
 
-        // Create project-specific SSE endpoint
-        app.get(`${basePath}/sse`, async (req: Request, res: Response) => {
-            console.log(`New SSE connection attempt for project ${config.projectName}`);
-            
-            req.socket.setTimeout(0);
-            req.socket.setNoDelay(true);
-            req.socket.setKeepAlive(true);
-            
-            try {
-                // Create transport with project-specific message endpoint path
-                const transport = new SSEServerTransport(`${basePath}/message`, res);
-                const sessionId = transport.sessionId;
-                transports[sessionId] = transport;
-
-                const keepAliveInterval = setInterval(() => {
-                    if (res.writable) {
-                        res.write(': keepalive\n\n');
-                    }
-                }, 30000);
-
-                if (mcpServer) {
-                    await mcpServer.connect(transport);
-                    console.log(`Server connected to SSE transport with session ID: ${sessionId} for project ${config.projectName}`);
-                    
-                    req.on('close', () => {
-                        console.log(`SSE connection closed for session ${sessionId}`);
-                        clearInterval(keepAliveInterval);
-                        delete transports[sessionId];
-                        transport.close().catch(err => {
-                            console.error('Error closing transport:', err);
-                        });
-                    });
-                } else {
-                    console.error('MCP Server not initialized');
-                    res.status(500).end();
-                    return;
-                }
-            } catch (error) {
-                console.error('Error in SSE connection:', error);
-                res.status(500).end();
-            }
+        // Create Streamable HTTP transport with session management
+        const transport = new NodeStreamableHTTPServerTransport({
+            sessionIdGenerator: () => randomUUID()
         });
-        
-        // Create project-specific message endpoint
-        app.post(`${basePath}/message`, async (req: Request, res: Response) => {
-            const sessionId = req.query.sessionId as string;
-            console.log(`Received message for session ${sessionId} in project ${config.projectName}:`, req.body?.method);
-            
-            const transport = transports[sessionId];
-            if (!transport) {
-                console.error(`No transport found for session ${sessionId}`);
-                res.status(400).json({
-                    jsonrpc: "2.0",
-                    id: req.body?.id,
-                    error: {
-                        code: -32000,
-                        message: "No active session found"
-                    }
-                });
-                return;
-            }
+
+        // Connect MCP server to transport
+        await mcpServer!.connect(transport);
+
+        // Single MCP endpoint that handles POST requests
+        app.post(`${basePath}/mcp`, async (req: Request, res: Response) => {
+            console.log(`Received MCP POST request for project ${config.projectName}`);
             
             try {
-                await transport.handlePostMessage(req, res, req.body);
-                console.log('Message handled successfully');
+                await transport.handleRequest(req, res, req.body);
+                console.log('MCP POST handled successfully');
             } catch (error) {
-                console.error('Error handling message:', error);
+                console.error('Error handling MCP POST:', error);
                 res.status(500).json({
                     jsonrpc: "2.0",
                     id: req.body?.id,
@@ -247,21 +195,56 @@ export async function activate(context: vscode.ExtensionContext) {
                 });
             }
         });
-        
-        // Add project-specific health check endpoint
-        app.get(`${basePath}/health`, (req: Request, res: Response) => {
+
+        // SSE endpoint for backwards compatibility with MCP clients
+        // that use the older SSE transport - returns 410 Gone
+        app.get(`${basePath}/sse`, async (_req: Request, res: Response) => {
+            console.log(`SSE connection attempt (deprecated transport) for project ${config.projectName}`);
+            console.log(`Consider migrating to Streamable HTTP at ${basePath}/mcp`);
+            
+            res.status(410).json({
+                status: 'deprecated',
+                message: 'SSE transport is deprecated. Use Streamable HTTP at /mcp',
+                newEndpoint: `${basePath}/mcp`
+            });
+        });
+
+        // Message endpoint (also deprecated) - returns 410 Gone
+        app.post(`${basePath}/message`, async (_req: Request, res: Response) => {
+            console.log(`Message POST received (deprecated transport) for project ${config.projectName}`);
+            
+            res.status(410).json({
+                status: 'deprecated',
+                message: 'Message endpoint is deprecated. Use Streamable HTTP at /mcp',
+                newEndpoint: `${basePath}/mcp`
+            });
+        });
+
+        // Health check endpoint with migration info
+        app.get(`${basePath}/health`, (_req: Request, res: Response) => {
             res.status(200).json({ 
                 status: 'ok',
                 project: config.projectName,
-                description: config.description
+                description: config.description,
+                transport: 'streamable-http',
+                endpoints: {
+                    mcp: `${basePath}/mcp`,
+                    deprecated: [
+                        `${basePath}/sse`,
+                        `${basePath}/message`
+                    ]
+                },
+                migration: 'Configure your client to use Streamable HTTP transport instead of SSE'
             });
         });
 
         try {
             const serv = app.listen(config.port);
             setHttpServer(serv);
-            vscode.window.showInformationMessage(`MCP server listening on http://localhost:${config.port}${basePath}`);
-            console.log(`MCP Server for project ${config.projectName} listening on http://localhost:${config.port}${basePath}`);
+            const serverUrl = basePath === '' ? `http://localhost:${config.port}` : `http://localhost:${config.port}${basePath}`;
+            vscode.window.showInformationMessage(`MCP server (Streamable HTTP) listening on ${serverUrl}`);
+            console.log(`MCP Server for project ${config.projectName} listening on ${serverUrl}`);
+            console.log(`MCP endpoint: ${basePath}/mcp`);
             return {
                 mcpServer: mcpServer!,
                 httpServer: httpServer!,
