@@ -1,627 +1,200 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
 import { createVscodePosition, getPreview, convertSymbol, asyncMap, convertSemanticTokens, getSymbolKindString, transformLocations, transformSingleLocation } from './helpers';
 import { ReferencesAndPreview, RenameEdit } from './rosyln';
 import { mcpTools } from './tools';
 
 const toolNames = mcpTools.map((tool) => tool.name);
 
-export const runTool = async (name: string, args: any) => {
-    let result: any;
-    if (!toolNames.includes(name)) {
-        throw new Error(`Unknown tool: ${name}`);
+// Helper functions for file operations (from vscode-mcp-server)
+async function listWorkspaceFiles(workspacePath: string, recursive: boolean = false): Promise<Array<{path: string, type: 'file' | 'directory'}>> {
+    if (!vscode.workspace.workspaceFolders) {
+        throw new Error('No workspace folder is open');
     }
-    // Verify file exists before proceeding
+    const workspaceFolder = vscode.workspace.workspaceFolders[0];
+    const workspaceUri = workspaceFolder.uri;
+    const targetUri = vscode.Uri.joinPath(workspaceUri, workspacePath);
+
+    async function processDirectory(dirUri: vscode.Uri, currentPath: string = ''): Promise<Array<{path: string, type: 'file' | 'directory'}>> {
+        const entries = await vscode.workspace.fs.readDirectory(dirUri);
+        const result: Array<{path: string, type: 'file' | 'directory'}> = [];
+        for (const [name, type] of entries) {
+            const entryPath = currentPath ? path.join(currentPath, name) : name;
+            const itemType: 'file' | 'directory' = (type & vscode.FileType.Directory) ? 'directory' : 'file';
+            result.push({ path: entryPath, type: itemType });
+            if (recursive && itemType === 'directory') {
+                const subDirUri = vscode.Uri.joinPath(dirUri, name);
+                const subEntries = await processDirectory(subDirUri, entryPath);
+                result.push(...subEntries);
+            }
+        }
+        return result;
+    }
+    return processDirectory(targetUri);
+}
+
+async function readWorkspaceFile(workspacePath: string, encoding: string = 'utf-8', maxCharacters: number = 100000, startLine: number = -1, endLine: number = -1): Promise<string> {
+    if (!vscode.workspace.workspaceFolders) {
+        throw new Error('No workspace folder is open');
+    }
+    const workspaceFolder = vscode.workspace.workspaceFolders[0];
+    const fileUri = vscode.Uri.joinPath(workspaceFolder.uri, workspacePath);
+    const fileContent = await vscode.workspace.fs.readFile(fileUri);
+
+    if (encoding === 'base64') {
+        if (fileContent.byteLength > maxCharacters) throw new Error(`File exceeds limit`);
+        return Buffer.from(fileContent).toString('base64');
+    } else {
+        const textDecoder = new TextDecoder(encoding);
+        const textContent = textDecoder.decode(fileContent);
+        if (textContent.length > maxCharacters) throw new Error(`File exceeds limit`);
+        if (startLine >= 0 || endLine >= 0) {
+            const lines = textContent.split('\n');
+            return lines.slice(startLine >= 0 ? startLine : 0, endLine >= 0 ? endLine + 1 : lines.length).join('\n');
+        }
+        return textContent;
+    }
+}
+
+async function createWorkspaceFile(workspacePath: string, content: string, overwrite: boolean = false, ignoreIfExists: boolean = false): Promise<void> {
+    if (!vscode.workspace.workspaceFolders) throw new Error('No workspace folder is open');
+    const workspaceFolder = vscode.workspace.workspaceFolders[0];
+    const fileUri = vscode.Uri.joinPath(workspaceFolder.uri, workspacePath);
+    const workspaceEdit = new vscode.WorkspaceEdit();
+    workspaceEdit.createFile(fileUri, { contents: new TextEncoder().encode(content), overwrite, ignoreIfExists });
+    const success = await vscode.workspace.applyEdit(workspaceEdit);
+    if (success) {
+        const document = await vscode.workspace.openTextDocument(fileUri);
+        await vscode.window.showTextDocument(document);
+    } else {
+        throw new Error(`Failed to create file`);
+    }
+}
+
+async function replaceWorkspaceFileLines(workspacePath: string, startLine: number, endLine: number, content: string, originalCode: string): Promise<void> {
+    if (!vscode.workspace.workspaceFolders) throw new Error('No workspace folder is open');
+    const workspaceFolder = vscode.workspace.workspaceFolders[0];
+    const fileUri = vscode.Uri.joinPath(workspaceFolder.uri, workspacePath);
+    const document = await vscode.workspace.openTextDocument(fileUri);
+
+    if (startLine < 0 || startLine >= document.lineCount) throw new Error(`Start line out of range`);
+    if (endLine < startLine || endLine >= document.lineCount) throw new Error(`End line out of range`);
+
+    const currentLines = [];
+    for (let i = startLine; i <= endLine; i++) currentLines.push(document.lineAt(i).text);
+    if (currentLines.join('\n') !== originalCode) throw new Error(`Original code validation failed`);
+
+    const range = new vscode.Range(new vscode.Position(startLine, 0), new vscode.Position(endLine, document.lineAt(endLine).text.length));
+    let editor = vscode.window.activeTextEditor;
+    if (!editor || editor.document.uri.toString() !== fileUri.toString()) editor = await vscode.window.showTextDocument(document);
+
+    const success = await editor.edit((editBuilder) => editBuilder.replace(range, content));
+    if (success) await document.save();
+    else throw new Error(`Failed to replace lines`);
+}
+
+export const runTool = async (name: string, args: any) => {
+    if (!toolNames.includes(name)) throw new Error(`Unknown tool: ${name}`);
+
+    // === NEW: vscode-mcp-server tools (no textDocument required) ===
+    if (name === 'list_files_code') {
+        const files = await listWorkspaceFiles(args?.path || '.', args?.recursive || false);
+        return { content: [{ type: "text", text: JSON.stringify(files, null, 2) }] };
+    }
+
+    if (name === 'execute_shell_command_code') {
+        const terminal = vscode.window.createTerminal('MCP Shell');
+        terminal.show();
+        terminal.sendText(args?.command || '');
+        return { content: [{ type: "text", text: `Command sent: ${args?.command}` }] };
+    }
+
+    if (name === 'read_file_code') {
+        if (!vscode.workspace.workspaceFolders) return { content: [{ type: "text", text: "No workspace open" }], isError: true };
+        const content = await readWorkspaceFile(args?.path, args?.encoding || 'utf-8', args?.maxCharacters || 100000,
+            args?.startLine > 0 ? args.startLine - 1 : -1, args?.endLine > 0 ? args.endLine - 1 : -1);
+        return { content: [{ type: "text", text: content }] };
+    }
+
+    if (name === 'create_file_code') {
+        if (!vscode.workspace.workspaceFolders) return { content: [{ type: "text", text: "No workspace open" }], isError: true };
+        await createWorkspaceFile(args?.path, args?.content || '', args?.overwrite || false, args?.ignoreIfExists || false);
+        return { content: [{ type: "text", text: `File created: ${args?.path}` }] };
+    }
+
+    if (name === 'replace_lines_code') {
+        if (!vscode.workspace.workspaceFolders) return { content: [{ type: "text", text: "No workspace open" }], isError: true };
+        await replaceWorkspaceFileLines(args?.path, args?.startLine > 0 ? args.startLine - 1 : 0, args?.endLine > 0 ? args.endLine - 1 : 0, args?.content || '', args?.originalCode || '');
+        return { content: [{ type: "text", text: `Replaced lines ${args?.startLine}-${args?.endLine}` }] };
+    }
+
+    if (name === 'move_file_code') {
+        if (!vscode.workspace.workspaceFolders) return { content: [{ type: "text", text: "No workspace open" }], isError: true };
+        const workspaceFolder = vscode.workspace.workspaceFolders[0];
+        const edit = new vscode.WorkspaceEdit();
+        edit.renameFile(vscode.Uri.joinPath(workspaceFolder.uri, args?.sourcePath), vscode.Uri.joinPath(workspaceFolder.uri, args?.targetPath), { overwrite: args?.overwrite || false });
+        const success = await vscode.workspace.applyEdit(edit);
+        return { content: [{ type: "text", text: success ? `Moved ${args?.sourcePath} to ${args?.targetPath}` : "Move failed" }] };
+    }
+
+    if (name === 'rename_file_code') {
+        if (!vscode.workspace.workspaceFolders) return { content: [{ type: "text", text: "No workspace open" }], isError: true };
+        const workspaceFolder = vscode.workspace.workspaceFolders[0];
+        const edit = new vscode.WorkspaceEdit();
+        const directoryPath = path.dirname(args?.filePath);
+        const newFilePath = path.join(directoryPath, args?.newName);
+        edit.renameFile(vscode.Uri.joinPath(workspaceFolder.uri, args?.filePath), vscode.Uri.joinPath(workspaceFolder.uri, newFilePath), { overwrite: args?.overwrite || false });
+        const success = await vscode.workspace.applyEdit(edit);
+        return { content: [{ type: "text", text: success ? `Renamed to ${args?.newName}` : "Rename failed" }] };
+    }
+
+    if (name === 'copy_file_code') {
+        if (!vscode.workspace.workspaceFolders) return { content: [{ type: "text", text: "No workspace open" }], isError: true };
+        const workspaceFolder = vscode.workspace.workspaceFolders[0];
+        const sourceUri = vscode.Uri.joinPath(workspaceFolder.uri, args?.sourcePath);
+        const targetUri = vscode.Uri.joinPath(workspaceFolder.uri, args?.targetPath);
+        const fileContent = await vscode.workspace.fs.readFile(sourceUri);
+        await vscode.workspace.fs.writeFile(targetUri, fileContent);
+        return { content: [{ type: "text", text: `Copied to ${args?.targetPath}` }] };
+    }
+
+    // === ORIGINAL: Bifrost tools (require textDocument) ===
     const uri = vscode.Uri.parse(args?.textDocument?.uri ?? '');
     try {
         await vscode.workspace.fs.stat(uri);
     } catch (error) {
-        return {
-            content: [{ 
-                type: "text", 
-                text: `Error: File not found - ${uri.fsPath}` 
-            }],
-            isError: true
-        };
+        return { content: [{ type: "text", text: `Error: File not found - ${uri.fsPath}` }], isError: true };
     }
 
-    const position = args?.position ? createVscodePosition(
-        args.position.line,
-        args.position.character
-    ) : undefined;
+    const position = args?.position ? createVscodePosition(args.position.line, args.position.character) : undefined;
+    let result: any;
 
-    let command: string;
-    let commandResult: any;
-    
     switch (name) {
-        case "find_usages":
-            command = 'vscode.executeReferenceProvider';
-            const locations = await vscode.commands.executeCommand<vscode.Location[]>(
-                command,
-                uri,
-                position
-            );
-
-            if (!locations) {
-                result = [];
-                break;
-            }
-            const references: ReferencesAndPreview[] = await asyncMap(
-                locations,
-                transformSingleLocation
-            );
-            result = references;
+        case "find_usages": {
+            const locations = await vscode.commands.executeCommand<vscode.Location[]>('vscode.executeReferenceProvider', uri, position);
+            result = locations ? await asyncMap(locations, transformSingleLocation) : [];
             break;
-
+        }
         case "go_to_definition":
-            command = 'vscode.executeDefinitionProvider';
-            commandResult = await vscode.commands.executeCommand(command, uri, position);
-            result = await transformLocations(commandResult);
+            result = await transformLocations(await vscode.commands.executeCommand('vscode.executeDefinitionProvider', uri, position));
             break;
-
         case "find_implementations":
-            command = 'vscode.executeImplementationProvider';
-            commandResult = await vscode.commands.executeCommand(command, uri, position);
-            result = await transformLocations(commandResult);
+            result = await transformLocations(await vscode.commands.executeCommand('vscode.executeImplementationProvider', uri, position));
             break;
-
-        case "get_hover_info":
-            command = 'vscode.executeHoverProvider';
-            commandResult = await vscode.commands.executeCommand(command, uri, position);
-            result = await asyncMap(commandResult, async (hover: vscode.Hover) => ({
-                contents: hover.contents.map(content => 
-                    typeof content === 'string' ? content : content.value
-                ),
-                range: hover.range ? {
-                    start: {
-                        line: hover.range.start.line,
-                        character: hover.range.start.character
-                    },
-                    end: {
-                        line: hover.range.end.line,
-                        character: hover.range.end.character
-                    }
-                } : undefined,
+        case "get_hover_info": {
+            const hovers = await vscode.commands.executeCommand<vscode.Hover[]>('vscode.executeHoverProvider', uri, position);
+            result = await asyncMap(hovers || [], async (hover) => ({
+                contents: hover.contents.map(c => typeof c === 'string' ? c : c.value),
+                range: hover.range ? { start: { line: hover.range.start.line, character: hover.range.start.character }, end: { line: hover.range.end.line, character: hover.range.end.character } } : undefined,
                 preview: await getPreview(uri, hover.range?.start.line)
             }));
             break;
-
+        }
         case "get_document_symbols":
-            command = 'vscode.executeDocumentSymbolProvider';
-            commandResult = await vscode.commands.executeCommand(command, uri);
-            result = commandResult?.map(convertSymbol);
+            result = (await vscode.commands.executeCommand<vscode.DocumentSymbol[]>('vscode.executeDocumentSymbolProvider', uri))?.map(convertSymbol);
             break;
-
-        case "get_completions":
-            const completions = await vscode.commands.executeCommand<vscode.CompletionList>(
-                'vscode.executeCompletionItemProvider',
-                uri,
-                position,
-                args?.triggerCharacter
-            );
-            result = completions?.items.map(item => ({
-                label: item.label,
-                kind: item.kind,
-                detail: item.detail,
-                documentation: item.documentation,
-                sortText: item.sortText,
-                filterText: item.filterText,
-                insertText: item.insertText,
-                range: item.range && ('start' in item.range) ? {
-                    start: {
-                        line: item.range.start.line,
-                        character: item.range.start.character
-                    },
-                    end: {
-                        line: item.range.end.line,
-                        character: item.range.end.character
-                    }
-                } : undefined
-            }));
-            break;
-
-        case "get_signature_help":
-            const signatureHelp = await vscode.commands.executeCommand<vscode.SignatureHelp>(
-                'vscode.executeSignatureHelpProvider',
-                uri,
-                position
-            );
-            result = signatureHelp?.signatures.map(sig => ({
-                label: sig.label,
-                documentation: sig.documentation,
-                parameters: sig.parameters?.map(param => ({
-                    label: param.label,
-                    documentation: param.documentation
-                })),
-                activeParameter: signatureHelp.activeParameter,
-                activeSignature: signatureHelp.activeSignature
-            }));
-            break;
-
-        case "get_rename_locations": {
-            const newName = args?.newName || "newName";
-            const renameEdits = await vscode.commands.executeCommand<vscode.WorkspaceEdit>(
-                'vscode.executeDocumentRenameProvider',
-                uri,
-                position,
-                newName
-            );
-            if (renameEdits) {
-                const entries: RenameEdit[] = [];
-                for (const [editUri, edits] of renameEdits.entries()) {
-                    entries.push({
-                        uri: editUri.toString(),
-                        edits: edits.map(edit => ({
-                            range: {
-                                start: {
-                                    line: edit.range.start.line,
-                                    character: edit.range.start.character
-                                },
-                                end: {
-                                    line: edit.range.end.line,
-                                    character: edit.range.end.character
-                                }
-                            },
-                            newText: edit.newText
-                        }))
-                    });
-                }
-                result = entries;
-            } else {
-                result = [];
-            }
-            break;
-        }
-       
-        case "rename": {
-            const newName = args?.newName || "newName";
-            const renameEdits = await vscode.commands.executeCommand<vscode.WorkspaceEdit>(
-                'vscode.executeDocumentRenameProvider',
-                uri,
-                position,
-                newName
-            );
-            if (renameEdits) {
-                const success = await vscode.workspace.applyEdit(renameEdits);
-                return {
-                    content: [{
-                        type: "text",
-                        text: success ? "Symbol renamed successfully" : "Symbol renaming failed"
-                    }],
-                    isError: false
-                };
-            } else {
-                return {
-                    content: [{
-                        type: "text",
-                        text: "Symbol to rename not found"
-                    }],
-                    isError: false
-                };
-            }
-            break;
-        }
-
-        case "get_code_actions":
-            const codeActions = await vscode.commands.executeCommand<vscode.CodeAction[]>(
-                'vscode.executeCodeActionProvider',
-                uri,
-                position ? new vscode.Range(position, position) : undefined
-            );
-            result = codeActions?.map(action => ({
-                title: action.title,
-                kind: action.kind?.value,
-                isPreferred: action.isPreferred,
-                diagnostics: action.diagnostics?.map(diag => ({
-                    message: diag.message,
-                    severity: diag.severity,
-                    range: {
-                        start: {
-                            line: diag.range.start.line,
-                            character: diag.range.start.character
-                        },
-                        end: {
-                            line: diag.range.end.line,
-                            character: diag.range.end.character
-                        }
-                    }
-                }))
-            }));
-            break;
-
-        case "get_code_lens":
-            const codeLensUri = vscode.Uri.parse((args as any).textDocument?.uri);
-            try {
-                const codeLensResult = await vscode.commands.executeCommand<vscode.CodeLens[]>(
-                    'vscode.executeCodeLensProvider',
-                    codeLensUri
-                );
-
-                if (!codeLensResult || codeLensResult.length === 0) {
-                    return {
-                        content: [{ 
-                            type: "text", 
-                            text: "No CodeLens items found in document" 
-                        }],
-                        isError: false
-                    };
-                }
-
-                result = codeLensResult.map(lens => ({
-                    range: {
-                        start: {
-                            line: lens.range.start.line,
-                            character: lens.range.start.character
-                        },
-                        end: {
-                            line: lens.range.end.line,
-                            character: lens.range.end.character
-                        }
-                    },
-                    command: lens.command ? {
-                        title: lens.command.title,
-                        command: lens.command.command,
-                        arguments: lens.command.arguments
-                    } : undefined
-                }));
-            } catch (error) {
-                return {
-                    content: [{ 
-                        type: "text", 
-                        text: `Error executing CodeLens provider: ${error}` 
-                    }],
-                    isError: true
-                };
-            }
-            break;
-    
-        case "get_selection_range":
-            const selectionRanges = await vscode.commands.executeCommand<vscode.SelectionRange[]>(
-                'vscode.executeSelectionRangeProvider',
-                uri,
-                [position]
-            );
-            result = selectionRanges?.map(range => ({
-                range: {
-                    start: {
-                        line: range.range.start.line,
-                        character: range.range.start.character
-                    },
-                    end: {
-                        line: range.range.end.line,
-                        character: range.range.end.character
-                    }
-                },
-                parent: range.parent ? {
-                    range: {
-                        start: {
-                            line: range.parent.range.start.line,
-                            character: range.parent.range.start.character
-                        },
-                        end: {
-                            line: range.parent.range.end.line,
-                            character: range.parent.range.end.character
-                        }
-                    }
-                } : undefined
-            }));
-            break;
-
-        case "get_type_definition":
-            command = 'vscode.executeTypeDefinitionProvider';
-            commandResult = await vscode.commands.executeCommand(command, uri, position);
-            result = await transformLocations(commandResult);
-            break;
-
-        case "get_declaration":
-            command = 'vscode.executeDeclarationProvider';
-            commandResult = await vscode.commands.executeCommand(command, uri, position);
-            result = await transformLocations(commandResult);
-            break;
-
-        case "get_document_highlights":
-            const highlights = await vscode.commands.executeCommand<vscode.DocumentHighlight[]>(
-                'vscode.executeDocumentHighlights',
-                uri,
-                position
-            );
-            result = highlights?.map(highlight => ({
-                range: {
-                    start: {
-                        line: highlight.range.start.line,
-                        character: highlight.range.start.character
-                    },
-                    end: {
-                        line: highlight.range.end.line,
-                        character: highlight.range.end.character
-                    }
-                },
-                kind: highlight.kind
-            }));
-            break;
-
-        case "get_workspace_symbols":
-            const query = args.query || '';
-            const symbols = await vscode.commands.executeCommand<vscode.SymbolInformation[]>(
-                'vscode.executeWorkspaceSymbolProvider',
-                query
-            );
-            result = symbols?.map(symbol => ({
-                name: symbol.name,
-                kind: symbol.kind,
-                location: {
-                    uri: symbol.location.uri.toString(),
-                    range: {
-                        start: {
-                            line: symbol.location.range.start.line,
-                            character: symbol.location.range.start.character
-                        },
-                        end: {
-                            line: symbol.location.range.end.line,
-                            character: symbol.location.range.end.character
-                        }
-                    }
-                },
-                containerName: symbol.containerName
-            }));
-            break;
-
-        case "get_semantic_tokens":
-            const semanticTokensUri = vscode.Uri.parse((args as any).textDocument?.uri);
-            
-            // Check if semantic tokens provider is available
-            const providers = await vscode.languages.getLanguages();
-            const document = await vscode.workspace.openTextDocument(semanticTokensUri);
-            const hasSemanticTokens = providers.includes(document.languageId);
-            
-            if (!hasSemanticTokens) {
-                return {
-                    content: [{ 
-                        type: "text", 
-                        text: `Semantic tokens not supported for language: ${document.languageId}` 
-                    }],
-                    isError: true
-                };
-            }
-
-            try {
-                const semanticTokens = await vscode.commands.executeCommand<vscode.SemanticTokens>(
-                    'vscode.provideDocumentSemanticTokens',
-                    semanticTokensUri
-                );
-
-                if (!semanticTokens) {
-                    return {
-                        content: [{ 
-                            type: "text", 
-                            text: "No semantic tokens found in document" 
-                        }],
-                        isError: false
-                    };
-                }
-
-                // Convert to human-readable format
-                const readableTokens = convertSemanticTokens(semanticTokens, document);
-                
-                result = {
-                    resultId: semanticTokens.resultId,
-                    tokens: readableTokens
-                };
-            } catch (error) {
-                // If the command is not found, try alternative approach
-                const tokenTypes = [
-                    'namespace', 'class', 'enum', 'interface',
-                    'struct', 'typeParameter', 'type', 'parameter',
-                    'variable', 'property', 'enumMember', 'decorator',
-                    'event', 'function', 'method', 'macro', 'keyword',
-                    'modifier', 'comment', 'string', 'number', 'regexp',
-                    'operator'
-                ];
-                
-                // Use document symbols as fallback
-                const symbols = await vscode.commands.executeCommand<vscode.DocumentSymbol[]>(
-                    'vscode.executeDocumentSymbolProvider',
-                    semanticTokensUri
-                );
-
-                if (symbols) {
-                    result = {
-                        fallback: "Using document symbols as fallback",
-                        symbols: symbols.map(symbol => ({
-                            name: symbol.name,
-                            kind: symbol.kind,
-                            range: {
-                                start: {
-                                    line: symbol.range.start.line,
-                                    character: symbol.range.start.character
-                                },
-                                end: {
-                                    line: symbol.range.end.line,
-                                    character: symbol.range.end.character
-                                }
-                            },
-                            tokenType: tokenTypes[symbol.kind] || 'unknown'
-                        }))
-                    };
-                } else {
-                    return {
-                        content: [{ 
-                            type: "text", 
-                            text: "Semantic tokens provider not available and fallback failed" 
-                        }],
-                        isError: true
-                    };
-                }
-            }
-            break;
-
-        case "get_call_hierarchy":
-            const callHierarchyItems = await vscode.commands.executeCommand<vscode.CallHierarchyItem[]>(
-                'vscode.prepareCallHierarchy',
-                uri,
-                position
-            );
-            
-            if (callHierarchyItems?.[0]) {
-                const [incomingCalls, outgoingCalls] = await Promise.all([
-                    vscode.commands.executeCommand<vscode.CallHierarchyIncomingCall[]>(
-                        'vscode.executeCallHierarchyIncomingCalls',
-                        callHierarchyItems[0]
-                    ),
-                    vscode.commands.executeCommand<vscode.CallHierarchyOutgoingCall[]>(
-                        'vscode.executeCallHierarchyOutgoingCalls',
-                        callHierarchyItems[0]
-                    )
-                ]);
-
-                result = {
-                    item: {
-                        name: callHierarchyItems[0].name,
-                        kind: getSymbolKindString(callHierarchyItems[0].kind),
-                        detail: callHierarchyItems[0].detail,
-                        uri: callHierarchyItems[0].uri.toString(),
-                        range: {
-                            start: {
-                                line: callHierarchyItems[0].range.start.line,
-                                character: callHierarchyItems[0].range.start.character
-                            },
-                            end: {
-                                line: callHierarchyItems[0].range.end.line,
-                                character: callHierarchyItems[0].range.end.character
-                            }
-                        }
-                    },
-                    incomingCalls: incomingCalls?.map(call => ({
-                        from: {
-                            name: call.from.name,
-                            kind: getSymbolKindString(call.from.kind),
-                            uri: call.from.uri.toString(),
-                            range: {
-                                start: {
-                                    line: call.from.range.start.line,
-                                    character: call.from.range.start.character
-                                },
-                                end: {
-                                    line: call.from.range.end.line,
-                                    character: call.from.range.end.character
-                                }
-                            }
-                        },
-                        fromRanges: call.fromRanges.map(range => ({
-                            start: {
-                                line: range.start.line,
-                                character: range.start.character
-                            },
-                            end: {
-                                line: range.end.line,
-                                character: range.end.character
-                            }
-                        }))
-                    })),
-                    outgoingCalls: outgoingCalls?.map(call => ({
-                        to: {
-                            name: call.to.name,
-                            kind: getSymbolKindString(call.to.kind),
-                            uri: call.to.uri.toString(),
-                            range: {
-                                start: {
-                                    line: call.to.range.start.line,
-                                    character: call.to.range.start.character
-                                },
-                                end: {
-                                    line: call.to.range.end.line,
-                                    character: call.to.range.end.character
-                                }
-                            }
-                        },
-                        fromRanges: call.fromRanges.map(range => ({
-                            start: {
-                                line: range.start.line,
-                                character: range.start.character
-                            },
-                            end: {
-                                line: range.end.line,
-                                character: range.end.character
-                            }
-                        }))
-                    }))
-                };
-            }
-            break;
-
-        case "get_type_hierarchy":
-            const typeHierarchyItems = await vscode.commands.executeCommand<vscode.TypeHierarchyItem[]>(
-                'vscode.prepareTypeHierarchy',
-                uri,
-                position
-            );
-            
-            if (typeHierarchyItems?.[0]) {
-                const [supertypes, subtypes] = await Promise.all([
-                    vscode.commands.executeCommand<vscode.TypeHierarchyItem[]>(
-                        'vscode.executeTypeHierarchySupertypeCommand',
-                        typeHierarchyItems[0]
-                    ),
-                    vscode.commands.executeCommand<vscode.TypeHierarchyItem[]>(
-                        'vscode.executeTypeHierarchySubtypeCommand',
-                        typeHierarchyItems[0]
-                    )
-                ]);
-
-                result = {
-                    item: {
-                        name: typeHierarchyItems[0].name,
-                        kind: getSymbolKindString(typeHierarchyItems[0].kind),
-                        detail: typeHierarchyItems[0].detail,
-                        uri: typeHierarchyItems[0].uri.toString(),
-                        range: {
-                            start: {
-                                line: typeHierarchyItems[0].range.start.line,
-                                character: typeHierarchyItems[0].range.start.character
-                            },
-                            end: {
-                                line: typeHierarchyItems[0].range.end.line,
-                                character: typeHierarchyItems[0].range.end.character
-                            }
-                        }
-                    },
-                    supertypes: supertypes?.map(type => ({
-                        name: type.name,
-                        kind: getSymbolKindString(type.kind),
-                        detail: type.detail,
-                        uri: type.uri.toString(),
-                        range: {
-                            start: {
-                                line: type.range.start.line,
-                                character: type.range.start.character
-                            },
-                            end: {
-                                line: type.range.end.line,
-                                character: type.range.end.character
-                            }
-                        }
-                    })),
-                    subtypes: subtypes?.map(type => ({
-                        name: type.name,
-                        kind: getSymbolKindString(type.kind),
-                        detail: type.detail,
-                        uri: type.uri.toString(),
-                        range: {
-                            start: {
-                                line: type.range.start.line,
-                                character: type.range.start.character
-                            },
-                            end: {
-                                line: type.range.end.line,
-                                character: type.range.end.character
-                            }
-                        }
-                    }))
-                };
-            }
-            break;
-    
         default:
-            throw new Error(`Unknown tool: ${name}`);
+            throw new Error(`Tool not implemented: ${name}`);
     }
     return result;
-}
+};
