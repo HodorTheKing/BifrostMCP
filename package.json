@@ -76,10 +76,10 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.6.1",
-    "@modelcontextprotocol/node": "^1.6.1",
     "@types/cors": "^2.8.17",
     "@types/express": "^5.0.0",
     "cors": "^2.8.5",
-    "express": "^5.0.1"
+    "express": "^5.0.1",
+    "raw-body": "^3.0.0"
   }
 }
