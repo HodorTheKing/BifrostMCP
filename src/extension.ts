@@ -162,6 +162,8 @@ export async function activate(context: vscode.ExtensionContext) {
 
         const app = express();
         app.use(cors());
+        app.use(express.json());
+
 
         const basePath = getProjectBasePath(config);
 
