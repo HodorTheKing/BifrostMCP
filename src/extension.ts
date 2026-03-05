@@ -6,9 +6,7 @@ import {
     CallToolRequestSchema, 
     ListResourcesRequestSchema, 
     ListResourceTemplatesRequestSchema, 
-    ListToolsRequestSchema,
-    McpError,
-    ErrorCode
+    ListToolsRequestSchema
 } from '@modelcontextprotocol/sdk/types.js';
 import express from 'express';
 import cors from 'cors';
@@ -109,9 +107,9 @@ export async function activate(context: vscode.ExtensionContext) {
             }
         });
 
-        // Handle uncaught errors from the MCP server
+        // Handle uncaught errors
         mcpServer!.onerror = (error) => {
-            console.error('MCP Server error:', error);
+            console.error('[MCP Server] Error:', error);
         };
 
         const app = express();
@@ -124,41 +122,38 @@ export async function activate(context: vscode.ExtensionContext) {
             credentials: true
         }));
 
+        // Handle OPTIONS for preflight
+        app.options('*', cors());
+
         const basePath = getProjectBasePath(config);
 
-        // Create transport
+        // Create transport with event handlers
         const transport = new StreamableHTTPServerTransport({
             sessionIdGenerator: () => randomUUID()
         });
 
-        // Connection handling
-        transport.onerror = (err) => {
-            console.error('Transport error:', err);
+        transport.onerror = (err: Error) => {
+            console.error('[MCP Transport] Error:', err);
         };
 
         transport.onclose = () => {
-            console.log('Transport closed');
-        };
-
-        transport.onconnection = (connection) => {
-            console.log('New connection established');
-            connection.onerror = (err) => {
-                console.error('Connection error:', err);
-            };
+            console.log('[MCP Transport] Closed');
         };
 
         await mcpServer!.connect(transport);
 
-        // Wrap transport handler with logging
+        // MCP endpoints with detailed logging
         app.post(`${basePath}/mcp`, async (req: Request, res: Response) => {
-            console.log(`[MCP POST] ${new Date().toISOString()}`);
-            console.log('Headers:', JSON.stringify(req.headers));
+            const requestId = randomUUID().slice(0, 8);
+            console.log(`[${requestId}] MCP POST ${new Date().toISOString()}`);
+            console.log(`[${requestId}] Content-Type:`, req.headers['content-type']);
+            console.log(`[${requestId}] Content-Length:`, req.headers['content-length']);
             
             try {
                 await transport.handleRequest(req, res);
-                console.log('[MCP POST] Handled successfully');
+                console.log(`[${requestId}] Success`);
             } catch (error) {
-                console.error('[MCP POST] Error:', error);
+                console.error(`[${requestId}] Error:`, error);
                 if (!res.headersSent) {
                     res.status(500).json({
                         jsonrpc: "2.0",
@@ -170,13 +165,14 @@ export async function activate(context: vscode.ExtensionContext) {
         });
         
         app.get(`${basePath}/mcp`, async (req: Request, res: Response) => {
-            console.log(`[MCP GET] ${new Date().toISOString()}`);
+            const requestId = randomUUID().slice(0, 8);
+            console.log(`[${requestId}] MCP GET ${new Date().toISOString()}`);
             
             try {
                 await transport.handleRequest(req, res);
-                console.log('[MCP GET] Handled successfully');
+                console.log(`[${requestId}] Success`);
             } catch (error) {
-                console.error('[MCP GET] Error:', error);
+                console.error(`[${requestId}] Error:`, error);
                 if (!res.headersSent) {
                     res.status(500).json({
                         jsonrpc: "2.0",
@@ -185,6 +181,23 @@ export async function activate(context: vscode.ExtensionContext) {
                     });
                 }
             }
+        });
+
+        // Deprecated endpoints
+        app.get(`${basePath}/sse`, async (_req: Request, res: Response) => {
+            res.status(410).json({
+                status: 'deprecated',
+                message: 'Use Streamable HTTP at /mcp',
+                newEndpoint: `${basePath}/mcp`
+            });
+        });
+
+        app.post(`${basePath}/message`, async (_req: Request, res: Response) => {
+            res.status(410).json({
+                status: 'deprecated',
+                message: 'Use Streamable HTTP at /mcp',
+                newEndpoint: `${basePath}/mcp`
+            });
         });
 
         // Health check
@@ -197,12 +210,18 @@ export async function activate(context: vscode.ExtensionContext) {
             });
         });
 
+        // Global error handler
+        app.use((err: Error, _req: Request, res: Response, _next: any) => {
+            console.error('[Express] Unhandled error:', err);
+            res.status(500).json({ error: err.message });
+        });
+
         try {
             const serv = app.listen(config.port);
             setHttpServer(serv);
             const url = `http://localhost:${config.port}${basePath}`;
             vscode.window.showInformationMessage(`MCP server: ${url}`);
-            console.log(`MCP server listening on ${url}`);
+            console.log(`[Startup] MCP server listening on ${url}`);
         } catch (error) {
             const msg = error instanceof Error ? error.message : String(error);
             vscode.window.showErrorMessage(`Failed to start: ${msg}`);
