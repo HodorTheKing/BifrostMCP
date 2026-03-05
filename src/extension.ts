@@ -6,7 +6,9 @@ import {
     CallToolRequestSchema, 
     ListResourcesRequestSchema, 
     ListResourceTemplatesRequestSchema, 
-    ListToolsRequestSchema 
+    ListToolsRequestSchema,
+    McpError,
+    ErrorCode
 } from '@modelcontextprotocol/sdk/types.js';
 import express from 'express';
 import cors from 'cors';
@@ -21,29 +23,25 @@ import { findBifrostConfig, BifrostConfig, getProjectBasePath } from './config';
 export async function activate(context: vscode.ExtensionContext) {
     let currentConfig: BifrostConfig | null = null;
 
-    // Handle workspace folder changes
     context.subscriptions.push(
         vscode.workspace.onDidChangeWorkspaceFolders(async () => {
             await restartServerWithConfig();
         })
     );
 
-    // Initial server start with config
     await restartServerWithConfig();
 
-    // Register debug panel command
     context.subscriptions.push(
         vscode.commands.registerCommand('bifrost-mcp.openDebugPanel', () => {
             createDebugPanel(context);
         })
     );
 
-    // Register commands
     context.subscriptions.push(
         vscode.commands.registerCommand('bifrost-mcp.startServer', async () => {
             try {
                 if (httpServer) {
-                    vscode.window.showInformationMessage(`MCP server is already running for project ${currentConfig?.projectName || 'unknown'}`);
+                    vscode.window.showInformationMessage(`MCP server already running for ${currentConfig?.projectName || 'unknown'}`);
                     return;
                 }
                 await restartServerWithConfig();
@@ -54,26 +52,22 @@ export async function activate(context: vscode.ExtensionContext) {
         }),
         vscode.commands.registerCommand('bifrost-mcp.stopServer', async () => {
             if (!httpServer && !mcpServer) {
-                vscode.window.showInformationMessage('No MCP server is currently running');
+                vscode.window.showInformationMessage('No MCP server running');
                 return;
             }
-            
             if (mcpServer) {
                 mcpServer.close();
                 setMcpServer(undefined);
             }
-            
             if (httpServer) {
                 httpServer.close();
                 setHttpServer(undefined);
             }
-            
             vscode.window.showInformationMessage('MCP server stopped');
         })
     );
 
     async function restartServerWithConfig() {
-        // Stop existing server if running
         if (mcpServer) {
             mcpServer.close();
             setMcpServer(undefined);
@@ -83,206 +77,141 @@ export async function activate(context: vscode.ExtensionContext) {
             setHttpServer(undefined);
         }
 
-        // Get workspace folder
         const workspaceFolders = vscode.workspace.workspaceFolders;
-        if (!workspaceFolders || workspaceFolders.length === 0) {
-            console.log('No workspace folder found');
+        if (!workspaceFolders?.length) {
+            console.log('No workspace folder');
             return;
         }
 
-        // Find config in current workspace - will return DEFAULT_CONFIG if none found
         const config = await findBifrostConfig(workspaceFolders[0]);
         currentConfig = config!;
         await startMcpServer(config!);
     }
 
-    async function startMcpServer(config: BifrostConfig): Promise<{ mcpServer: Server, httpServer: HttpServer, port: number }> {
-        // Create an MCP Server with project-specific info
+    async function startMcpServer(config: BifrostConfig) {
         setMcpServer(new Server(
-            {
-                name: config.projectName,
-                version: "0.1.0",
-                description: config.description
-            },
-            {
-                capabilities: {
-                    tools: {},
-                    resources: {},
-                }
-            }
+            { name: config.projectName, version: "0.1.0", description: config.description },
+            { capabilities: { tools: {}, resources: {} } }
         ));
 
-        // Add tools handlers
-        mcpServer!.setRequestHandler(ListToolsRequestSchema, async () => ({
-            tools: mcpTools
-        }));
+        mcpServer!.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: mcpTools }));
+        mcpServer!.setRequestHandler(ListResourcesRequestSchema, async () => ({ resources: [] }));
+        mcpServer!.setRequestHandler(ListResourceTemplatesRequestSchema, async () => ({ templates: [] }));
 
-        mcpServer!.setRequestHandler(ListResourcesRequestSchema, async () => ({
-            resources: []
-        }));
-
-        mcpServer!.setRequestHandler(ListResourceTemplatesRequestSchema, async () => ({
-            templates: []
-        }));
-
-        // Add call tool handler
         mcpServer!.setRequestHandler(CallToolRequestSchema, async (request) => {
             try {
                 const { name, arguments: args } = request.params;
-                let result: any;
-                
-                if (args && typeof args === 'object' && 'textDocument' in args && 
-                    args.textDocument && typeof args.textDocument === 'object' && 
-                    'uri' in args.textDocument && typeof args.textDocument.uri === 'string') {
-                    const uri = vscode.Uri.parse(args.textDocument.uri);
-                    try {
-                        await vscode.workspace.fs.stat(uri);
-                    } catch (error) {
-                        return {
-                            content: [{ 
-                                type: "text", 
-                                text: `Error: File not found - ${uri.fsPath}` 
-                            }],
-                            isError: true
-                        };
-                    }
-                }
-                
-                result = await runTool(name, args);
-
+                const result = await runTool(name, args);
                 return { content: [{ type: "text", text: JSON.stringify(result) }] };
             } catch (error) {
-                const errorMessage = error instanceof Error ? error.message : String(error);
-                return {
-                    content: [{ type: "text", text: `Error: ${errorMessage}` }],
-                    isError: true,
-                };
+                const msg = error instanceof Error ? error.message : String(error);
+                return { content: [{ type: "text", text: `Error: ${msg}` }], isError: true };
             }
         });
 
+        // Handle uncaught errors from the MCP server
+        mcpServer!.onerror = (error) => {
+            console.error('MCP Server error:', error);
+        };
+
         const app = express();
         
-        // Enable CORS for all origins
-        app.use(cors());
-        
-        // DO NOT use express.json() - it conflicts with the transport's body reading
-        // The StreamableHTTPServerTransport reads raw request body internally
+        // Enable CORS with specific configuration for MCP
+        app.use(cors({
+            origin: '*',
+            methods: ['GET', 'POST', 'OPTIONS'],
+            allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+            credentials: true
+        }));
 
         const basePath = getProjectBasePath(config);
 
-        // Create Streamable HTTP transport with session management
+        // Create transport
         const transport = new StreamableHTTPServerTransport({
             sessionIdGenerator: () => randomUUID()
         });
 
-        // Connect MCP server to transport
+        // Connection handling
+        transport.onerror = (err) => {
+            console.error('Transport error:', err);
+        };
+
+        transport.onclose = () => {
+            console.log('Transport closed');
+        };
+
+        transport.onconnection = (connection) => {
+            console.log('New connection established');
+            connection.onerror = (err) => {
+                console.error('Connection error:', err);
+            };
+        };
+
         await mcpServer!.connect(transport);
 
-        // Handle POST requests for MCP messages
+        // Wrap transport handler with logging
         app.post(`${basePath}/mcp`, async (req: Request, res: Response) => {
-            console.log(`Received MCP POST request for project ${config.projectName}`);
+            console.log(`[MCP POST] ${new Date().toISOString()}`);
+            console.log('Headers:', JSON.stringify(req.headers));
             
             try {
-                // Do NOT pass req.body - transport handles body reading internally
                 await transport.handleRequest(req, res);
-                console.log('MCP POST handled successfully');
+                console.log('[MCP POST] Handled successfully');
             } catch (error) {
-                console.error('Error handling MCP POST:', error);
+                console.error('[MCP POST] Error:', error);
                 if (!res.headersSent) {
                     res.status(500).json({
                         jsonrpc: "2.0",
                         id: null,
-                        error: {
-                            code: -32000,
-                            message: String(error)
-                        }
+                        error: { code: -32000, message: String(error) }
                     });
                 }
             }
         });
         
-        // Handle GET requests for SSE streaming from Streamable HTTP
         app.get(`${basePath}/mcp`, async (req: Request, res: Response) => {
-            console.log(`Received MCP GET request for project ${config.projectName}`);
+            console.log(`[MCP GET] ${new Date().toISOString()}`);
             
             try {
                 await transport.handleRequest(req, res);
-                console.log('MCP GET handled successfully');
+                console.log('[MCP GET] Handled successfully');
             } catch (error) {
-                console.error('Error handling MCP GET:', error);
+                console.error('[MCP GET] Error:', error);
                 if (!res.headersSent) {
                     res.status(500).json({
                         jsonrpc: "2.0",
                         id: null,
-                        error: {
-                            code: -32000,
-                            message: String(error)
-                        }
+                        error: { code: -32000, message: String(error) }
                     });
                 }
             }
         });
 
-        // Backwards compatibility endpoints - return 410 Gone
-        app.get(`${basePath}/sse`, async (_req: Request, res: Response) => {
-            res.status(410).json({
-                status: 'deprecated',
-                message: 'SSE transport is deprecated. Use Streamable HTTP at /mcp',
-                newEndpoint: `${basePath}/mcp`
-            });
-        });
-
-        app.post(`${basePath}/message`, async (_req: Request, res: Response) => {
-            res.status(410).json({
-                status: 'deprecated',
-                message: 'Message endpoint is deprecated. Use Streamable HTTP at /mcp',
-                newEndpoint: `${basePath}/mcp`
-            });
-        });
-
-        // Health check endpoint
+        // Health check
         app.get(`${basePath}/health`, (_req: Request, res: Response) => {
-            res.status(200).json({ 
+            res.json({ 
                 status: 'ok',
                 project: config.projectName,
-                description: config.description,
                 transport: 'streamable-http',
-                endpoints: {
-                    mcp: `${basePath}/mcp`,
-                    deprecated: [
-                        `${basePath}/sse`,
-                        `${basePath}/message`
-                    ]
-                },
-                migration: 'Configure your client to use Streamable HTTP transport instead of SSE'
+                timestamp: new Date().toISOString()
             });
         });
 
         try {
             const serv = app.listen(config.port);
             setHttpServer(serv);
-            const serverUrl = basePath === '' ? `http://localhost:${config.port}` : `http://localhost:${config.port}${basePath}`;
-            vscode.window.showInformationMessage(`MCP server (Streamable HTTP) listening on ${serverUrl}`);
-            console.log(`MCP Server for project ${config.projectName} listening on ${serverUrl}`);
-            console.log(`MCP endpoint: ${basePath}/mcp`);
-            return {
-                mcpServer: mcpServer!,
-                httpServer: httpServer!,
-                port: config.port
-            };
+            const url = `http://localhost:${config.port}${basePath}`;
+            vscode.window.showInformationMessage(`MCP server: ${url}`);
+            console.log(`MCP server listening on ${url}`);
         } catch (error) {
-            const errorMsg = error instanceof Error ? error.message : String(error);
-            vscode.window.showErrorMessage(`Failed to start server on configured port ${config.port}${basePath}. Please check if the port is available or configure a different port in bifrost.config.json. Error: ${errorMsg}`);
-            throw new Error(`Failed to start server on configured port ${config.port}. Please check if the port is available or configure a different port in bifrost.config.json. Error: ${errorMsg}`);
+            const msg = error instanceof Error ? error.message : String(error);
+            vscode.window.showErrorMessage(`Failed to start: ${msg}`);
+            throw error;
         }
     }
 }
 
 export function deactivate() {
-    if (mcpServer) {
-        mcpServer.close();
-    }
-    if (httpServer) {
-        httpServer.close();
-    }
+    mcpServer?.close();
+    httpServer?.close();
 }
