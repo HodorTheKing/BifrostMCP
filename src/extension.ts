@@ -9,6 +9,7 @@ import {
     ListToolsRequestSchema 
 } from '@modelcontextprotocol/sdk/types.js';
 import express from 'express';
+import cors from 'cors';
 import type { Server as HttpServer } from 'http';
 import { Request, Response } from 'express';
 import { mcpTools } from './tools';
@@ -160,6 +161,9 @@ export async function activate(context: vscode.ExtensionContext) {
         });
 
         const app = express();
+        
+        // Enable CORS for all origins
+        app.use(cors());
         
         // DO NOT use express.json() - it conflicts with the transport's body reading
         // The StreamableHTTPServerTransport reads raw request body internally
