@@ -114,16 +114,15 @@ export async function activate(context: vscode.ExtensionContext) {
 
         const app = express();
         
-        // Enable CORS with specific configuration for MCP
+        // Enable CORS - the cors() middleware handles OPTIONS automatically
         app.use(cors({
-            origin: '*',
+            origin: true,
             methods: ['GET', 'POST', 'OPTIONS'],
-            allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
-            credentials: true
+            allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
+            credentials: false
         }));
-
-        // Handle OPTIONS for preflight
-        app.options('*', cors());
+        // REMOVED: app.options('*', cors()) - causes Express "Missing parameter name" error
+        // The cors middleware above already handles preflight OPTIONS requests
 
         const basePath = getProjectBasePath(config);
 
