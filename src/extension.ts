@@ -9,7 +9,6 @@ import {
     ListToolsRequestSchema 
 } from '@modelcontextprotocol/sdk/types.js';
 import express from 'express';
-import cors from 'cors';
 import type { Server as HttpServer } from 'http';
 import { Request, Response } from 'express';
 import { mcpTools } from './tools';
@@ -161,9 +160,9 @@ export async function activate(context: vscode.ExtensionContext) {
         });
 
         const app = express();
-        app.use(cors());
-        app.use(express.json());
-
+        
+        // DO NOT use express.json() - it conflicts with the transport's body reading
+        // The StreamableHTTPServerTransport reads raw request body internally
 
         const basePath = getProjectBasePath(config);
 
@@ -180,18 +179,21 @@ export async function activate(context: vscode.ExtensionContext) {
             console.log(`Received MCP POST request for project ${config.projectName}`);
             
             try {
-                await transport.handleRequest(req, res, req.body);
+                // Do NOT pass req.body - transport handles body reading internally
+                await transport.handleRequest(req, res);
                 console.log('MCP POST handled successfully');
             } catch (error) {
                 console.error('Error handling MCP POST:', error);
-                res.status(500).json({
-                    jsonrpc: "2.0",
-                    id: req.body?.id,
-                    error: {
-                        code: -32000,
-                        message: String(error)
-                    }
-                });
+                if (!res.headersSent) {
+                    res.status(500).json({
+                        jsonrpc: "2.0",
+                        id: null,
+                        error: {
+                            code: -32000,
+                            message: String(error)
+                        }
+                    });
+                }
             }
         });
         
@@ -204,14 +206,16 @@ export async function activate(context: vscode.ExtensionContext) {
                 console.log('MCP GET handled successfully');
             } catch (error) {
                 console.error('Error handling MCP GET:', error);
-                res.status(500).json({
-                    jsonrpc: "2.0",
-                    id: null,
-                    error: {
-                        code: -32000,
-                        message: String(error)
-                    }
-                });
+                if (!res.headersSent) {
+                    res.status(500).json({
+                        jsonrpc: "2.0",
+                        id: null,
+                        error: {
+                            code: -32000,
+                            message: String(error)
+                        }
+                    });
+                }
             }
         });
 
