@@ -94,72 +94,149 @@ async function replaceWorkspaceFileLines(workspacePath: string, startLine: numbe
 }
 
 export const runTool = async (name: string, args: any) => {
-    if (!toolNames.includes(name)) throw new Error(`Unknown tool: ${name}`);
+    if (!toolNames.includes(name)) {
+        return { content: [{ type: "text", text: `Unknown tool: ${name}` }], isError: true };
+    }
 
     // === NEW: vscode-mcp-server tools (no textDocument required) ===
     if (name === 'list_files_code') {
-        const files = await listWorkspaceFiles(args?.path || '.', args?.recursive || false);
-        return { content: [{ type: "text", text: JSON.stringify(files, null, 2) }] };
+        try {
+            const files = await listWorkspaceFiles(args?.path || '.', args?.recursive || false);
+            return { content: [{ type: "text", text: JSON.stringify(files, null, 2) }] };
+        } catch (error) {
+            const msg = error instanceof Error ? error.message : String(error);
+            return { content: [{ type: "text", text: `Error: ${msg}` }], isError: true };
+        }
     }
 
     if (name === 'execute_shell_command_code') {
-        const terminal = vscode.window.createTerminal('MCP Shell');
-        terminal.show();
-        terminal.sendText(args?.command || '');
-        return { content: [{ type: "text", text: `Command sent: ${args?.command}` }] };
+        try {
+            const terminal = vscode.window.createTerminal('MCP Shell');
+            terminal.show();
+            terminal.sendText(args?.command || '');
+            return { content: [{ type: "text", text: `Command sent: ${args?.command}` }] };
+        } catch (error) {
+            const msg = error instanceof Error ? error.message : String(error);
+            return { content: [{ type: "text", text: `Error: ${msg}` }], isError: true };
+        }
     }
 
     if (name === 'read_file_code') {
-        if (!vscode.workspace.workspaceFolders) return { content: [{ type: "text", text: "No workspace open" }], isError: true };
-        const content = await readWorkspaceFile(args?.path, args?.encoding || 'utf-8', args?.maxCharacters || 100000,
-            args?.startLine > 0 ? args.startLine - 1 : -1, args?.endLine > 0 ? args.endLine - 1 : -1);
-        return { content: [{ type: "text", text: content }] };
+        if (!vscode.workspace.workspaceFolders) {
+            return { content: [{ type: "text", text: "No workspace open" }], isError: true };
+        }
+        try {
+            const content = await readWorkspaceFile(
+                args?.path,
+                args?.encoding || 'utf-8',
+                args?.maxCharacters || 100000,
+                args?.startLine > 0 ? args.startLine - 1 : -1,
+                args?.endLine > 0 ? args.endLine - 1 : -1
+            );
+            return { content: [{ type: "text", text: content }] };
+        } catch (error) {
+            const msg = error instanceof Error ? error.message : String(error);
+            return { content: [{ type: "text", text: `Error reading file: ${msg}` }], isError: true };
+        }
     }
 
     if (name === 'create_file_code') {
-        if (!vscode.workspace.workspaceFolders) return { content: [{ type: "text", text: "No workspace open" }], isError: true };
-        await createWorkspaceFile(args?.path, args?.content || '', args?.overwrite || false, args?.ignoreIfExists || false);
-        return { content: [{ type: "text", text: `File created: ${args?.path}` }] };
+        if (!vscode.workspace.workspaceFolders) {
+            return { content: [{ type: "text", text: "No workspace open" }], isError: true };
+        }
+        try {
+            await createWorkspaceFile(args?.path, args?.content || '', args?.overwrite || false, args?.ignoreIfExists || false);
+            return { content: [{ type: "text", text: `File created: ${args?.path}` }] };
+        } catch (error) {
+            const msg = error instanceof Error ? error.message : String(error);
+            return { content: [{ type: "text", text: `Error creating file: ${msg}` }], isError: true };
+        }
     }
 
     if (name === 'replace_lines_code') {
-        if (!vscode.workspace.workspaceFolders) return { content: [{ type: "text", text: "No workspace open" }], isError: true };
-        await replaceWorkspaceFileLines(args?.path, args?.startLine > 0 ? args.startLine - 1 : 0, args?.endLine > 0 ? args.endLine - 1 : 0, args?.content || '', args?.originalCode || '');
-        return { content: [{ type: "text", text: `Replaced lines ${args?.startLine}-${args?.endLine}` }] };
+        if (!vscode.workspace.workspaceFolders) {
+            return { content: [{ type: "text", text: "No workspace open" }], isError: true };
+        }
+        try {
+            await replaceWorkspaceFileLines(
+                args?.path,
+                args?.startLine > 0 ? args.startLine - 1 : 0,
+                args?.endLine > 0 ? args.endLine - 1 : 0,
+                args?.content || '',
+                args?.originalCode || ''
+            );
+            return { content: [{ type: "text", text: `Replaced lines ${args?.startLine}-${args?.endLine}` }] };
+        } catch (error) {
+            const msg = error instanceof Error ? error.message : String(error);
+            return { content: [{ type: "text", text: `Error replacing lines: ${msg}` }], isError: true };
+        }
     }
 
     if (name === 'move_file_code') {
-        if (!vscode.workspace.workspaceFolders) return { content: [{ type: "text", text: "No workspace open" }], isError: true };
-        const workspaceFolder = vscode.workspace.workspaceFolders[0];
-        const edit = new vscode.WorkspaceEdit();
-        edit.renameFile(vscode.Uri.joinPath(workspaceFolder.uri, args?.sourcePath), vscode.Uri.joinPath(workspaceFolder.uri, args?.targetPath), { overwrite: args?.overwrite || false });
-        const success = await vscode.workspace.applyEdit(edit);
-        return { content: [{ type: "text", text: success ? `Moved ${args?.sourcePath} to ${args?.targetPath}` : "Move failed" }] };
+        if (!vscode.workspace.workspaceFolders) {
+            return { content: [{ type: "text", text: "No workspace open" }], isError: true };
+        }
+        try {
+            const workspaceFolder = vscode.workspace.workspaceFolders[0];
+            const edit = new vscode.WorkspaceEdit();
+            edit.renameFile(
+                vscode.Uri.joinPath(workspaceFolder.uri, args?.sourcePath),
+                vscode.Uri.joinPath(workspaceFolder.uri, args?.targetPath),
+                { overwrite: args?.overwrite || false }
+            );
+            const success = await vscode.workspace.applyEdit(edit);
+            return { content: [{ type: "text", text: success ? `Moved ${args?.sourcePath} to ${args?.targetPath}` : "Move failed" }] };
+        } catch (error) {
+            const msg = error instanceof Error ? error.message : String(error);
+            return { content: [{ type: "text", text: `Error moving file: ${msg}` }], isError: true };
+        }
     }
 
     if (name === 'rename_file_code') {
-        if (!vscode.workspace.workspaceFolders) return { content: [{ type: "text", text: "No workspace open" }], isError: true };
-        const workspaceFolder = vscode.workspace.workspaceFolders[0];
-        const edit = new vscode.WorkspaceEdit();
-        const directoryPath = path.dirname(args?.filePath);
-        const newFilePath = path.join(directoryPath, args?.newName);
-        edit.renameFile(vscode.Uri.joinPath(workspaceFolder.uri, args?.filePath), vscode.Uri.joinPath(workspaceFolder.uri, newFilePath), { overwrite: args?.overwrite || false });
-        const success = await vscode.workspace.applyEdit(edit);
-        return { content: [{ type: "text", text: success ? `Renamed to ${args?.newName}` : "Rename failed" }] };
+        if (!vscode.workspace.workspaceFolders) {
+            return { content: [{ type: "text", text: "No workspace open" }], isError: true };
+        }
+        try {
+            const workspaceFolder = vscode.workspace.workspaceFolders[0];
+            const edit = new vscode.WorkspaceEdit();
+            const directoryPath = path.dirname(args?.filePath);
+            const newFilePath = path.join(directoryPath, args?.newName);
+            edit.renameFile(
+                vscode.Uri.joinPath(workspaceFolder.uri, args?.filePath),
+                vscode.Uri.joinPath(workspaceFolder.uri, newFilePath),
+                { overwrite: args?.overwrite || false }
+            );
+            const success = await vscode.workspace.applyEdit(edit);
+            return { content: [{ type: "text", text: success ? `Renamed to ${args?.newName}` : "Rename failed" }] };
+        } catch (error) {
+            const msg = error instanceof Error ? error.message : String(error);
+            return { content: [{ type: "text", text: `Error renaming file: ${msg}` }], isError: true };
+        }
     }
 
     if (name === 'copy_file_code') {
-        if (!vscode.workspace.workspaceFolders) return { content: [{ type: "text", text: "No workspace open" }], isError: true };
-        const workspaceFolder = vscode.workspace.workspaceFolders[0];
-        const sourceUri = vscode.Uri.joinPath(workspaceFolder.uri, args?.sourcePath);
-        const targetUri = vscode.Uri.joinPath(workspaceFolder.uri, args?.targetPath);
-        const fileContent = await vscode.workspace.fs.readFile(sourceUri);
-        await vscode.workspace.fs.writeFile(targetUri, fileContent);
-        return { content: [{ type: "text", text: `Copied to ${args?.targetPath}` }] };
+        if (!vscode.workspace.workspaceFolders) {
+            return { content: [{ type: "text", text: "No workspace open" }], isError: true };
+        }
+        try {
+            const workspaceFolder = vscode.workspace.workspaceFolders[0];
+            const sourceUri = vscode.Uri.joinPath(workspaceFolder.uri, args?.sourcePath);
+            const targetUri = vscode.Uri.joinPath(workspaceFolder.uri, args?.targetPath);
+            const fileContent = await vscode.workspace.fs.readFile(sourceUri);
+            await vscode.workspace.fs.writeFile(targetUri, fileContent);
+            return { content: [{ type: "text", text: `Copied to ${args?.targetPath}` }] };
+        } catch (error) {
+            const msg = error instanceof Error ? error.message : String(error);
+            return { content: [{ type: "text", text: `Error copying file: ${msg}` }], isError: true };
+        }
     }
 
     // === ORIGINAL: Bifrost tools (require textDocument) ===
-    const uri = vscode.Uri.parse(args?.textDocument?.uri ?? '');
+    if (!args?.textDocument?.uri) {
+        return { content: [{ type: "text", text: "Missing textDocument.uri parameter" }], isError: true };
+    }
+
+    const uri = vscode.Uri.parse(args?.textDocument?.uri);
     try {
         await vscode.workspace.fs.stat(uri);
     } catch (error) {
@@ -169,32 +246,37 @@ export const runTool = async (name: string, args: any) => {
     const position = args?.position ? createVscodePosition(args.position.line, args.position.character) : undefined;
     let result: any;
 
-    switch (name) {
-        case "find_usages": {
-            const locations = await vscode.commands.executeCommand<vscode.Location[]>('vscode.executeReferenceProvider', uri, position);
-            result = locations ? await asyncMap(locations, transformSingleLocation) : [];
-            break;
+    try {
+        switch (name) {
+            case "find_usages": {
+                const locations = await vscode.commands.executeCommand<vscode.Location[]>('vscode.executeReferenceProvider', uri, position);
+                result = locations ? await asyncMap(locations, transformSingleLocation) : [];
+                break;
+            }
+            case "go_to_definition":
+                result = await transformLocations(await vscode.commands.executeCommand('vscode.executeDefinitionProvider', uri, position));
+                break;
+            case "find_implementations":
+                result = await transformLocations(await vscode.commands.executeCommand('vscode.executeImplementationProvider', uri, position));
+                break;
+            case "get_hover_info": {
+                const hovers = await vscode.commands.executeCommand<vscode.Hover[]>('vscode.executeHoverProvider', uri, position);
+                result = await asyncMap(hovers || [], async (hover) => ({
+                    contents: hover.contents.map(c => typeof c === 'string' ? c : c.value),
+                    range: hover.range ? { start: { line: hover.range.start.line, character: hover.range.start.character }, end: { line: hover.range.end.line, character: hover.range.end.character } } : undefined,
+                    preview: await getPreview(uri, hover.range?.start.line)
+                }));
+                break;
+            }
+            case "get_document_symbols":
+                result = (await vscode.commands.executeCommand<vscode.DocumentSymbol[]>('vscode.executeDocumentSymbolProvider', uri))?.map(convertSymbol);
+                break;
+            default:
+                throw new Error(`Tool not implemented: ${name}`);
         }
-        case "go_to_definition":
-            result = await transformLocations(await vscode.commands.executeCommand('vscode.executeDefinitionProvider', uri, position));
-            break;
-        case "find_implementations":
-            result = await transformLocations(await vscode.commands.executeCommand('vscode.executeImplementationProvider', uri, position));
-            break;
-        case "get_hover_info": {
-            const hovers = await vscode.commands.executeCommand<vscode.Hover[]>('vscode.executeHoverProvider', uri, position);
-            result = await asyncMap(hovers || [], async (hover) => ({
-                contents: hover.contents.map(c => typeof c === 'string' ? c : c.value),
-                range: hover.range ? { start: { line: hover.range.start.line, character: hover.range.start.character }, end: { line: hover.range.end.line, character: hover.range.end.character } } : undefined,
-                preview: await getPreview(uri, hover.range?.start.line)
-            }));
-            break;
-        }
-        case "get_document_symbols":
-            result = (await vscode.commands.executeCommand<vscode.DocumentSymbol[]>('vscode.executeDocumentSymbolProvider', uri))?.map(convertSymbol);
-            break;
-        default:
-            throw new Error(`Tool not implemented: ${name}`);
+        return result;
+    } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        return { content: [{ type: "text", text: `Error: ${msg}` }], isError: true };
     }
-    return result;
 };
