@@ -18,6 +18,19 @@ import { mcpServer, httpServer, setMcpServer, setHttpServer } from './globals';
 import { runTool } from './toolRunner';
 import { findBifrostConfig, BifrostConfig, getProjectBasePath } from './config';
 
+// Fix Accept header for StreamableHTTPServerTransport compatibility
+function fixAcceptHeader(req: Request): void {
+    const accept = req.headers['accept'];
+    if (typeof accept === 'string') {
+        // StreamableHTTPServerTransport requires both application/json AND text/event-stream
+        if (!accept.includes('application/json') || !accept.includes('text/event-stream')) {
+            req.headers['accept'] = 'application/json, text/event-stream';
+        }
+    } else if (!accept) {
+        req.headers['accept'] = 'application/json, text/event-stream';
+    }
+}
+
 export async function activate(context: vscode.ExtensionContext) {
     let currentConfig: BifrostConfig | null = null;
 
@@ -100,7 +113,8 @@ export async function activate(context: vscode.ExtensionContext) {
             try {
                 const { name, arguments: args } = request.params;
                 const result = await runTool(name, args);
-                return { content: [{ type: "text", text: JSON.stringify(result) }] };
+                // runTool already returns MCP format { content: [...], isError?: boolean }
+                return result;
             } catch (error) {
                 const msg = error instanceof Error ? error.message : String(error);
                 return { content: [{ type: "text", text: `Error: ${msg}` }], isError: true };
@@ -143,10 +157,10 @@ export async function activate(context: vscode.ExtensionContext) {
 
         // MCP endpoints with detailed logging
         app.post(`${basePath}/mcp`, async (req: Request, res: Response) => {
+            fixAcceptHeader(req); // Normalize Accept header
             const requestId = randomUUID().slice(0, 8);
             console.log(`[${requestId}] MCP POST ${new Date().toISOString()}`);
             console.log(`[${requestId}] Content-Type:`, req.headers['content-type']);
-            console.log(`[${requestId}] Content-Length:`, req.headers['content-length']);
             
             try {
                 await transport.handleRequest(req, res);
@@ -164,6 +178,7 @@ export async function activate(context: vscode.ExtensionContext) {
         });
         
         app.get(`${basePath}/mcp`, async (req: Request, res: Response) => {
+            fixAcceptHeader(req); // Normalize Accept header
             const requestId = randomUUID().slice(0, 8);
             console.log(`[${requestId}] MCP GET ${new Date().toISOString()}`);
             
